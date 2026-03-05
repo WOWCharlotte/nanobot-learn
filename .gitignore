@@ -1,9 +1,9 @@
 .assets
+.claude
 .env
 *.pyc
 dist/
 build/
-docs/
 *.egg-info/
 *.egg
 *.pyc
@@ -13,6 +13,7 @@ docs/
 *.pyz
 *.pywz
 *.pyzz
+*.lock
 .venv/
 venv/
 __pycache__/

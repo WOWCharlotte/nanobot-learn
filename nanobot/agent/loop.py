@@ -334,6 +334,33 @@ class AgentLoop:
         on_progress: Callable[[str], Awaitable[None]] | None = None,
     ) -> OutboundMessage | None:
         """Process a single inbound message and return the response."""
+        """
+        1. System消息处理
+        └─► 解析channel:chat_id
+        └─► 特殊处理
+
+        2. Slash命令
+        ├─► /new  - 立即整合记忆，开启新会话
+        └─► /help - 显示帮助
+
+        3. 记忆整合触发
+        └─► 如果 unconsolidated >= memory_window
+        └─► 异步触发 _consolidate_memory()
+
+        4. 构建消息
+        ├─► session.get_history(max_messages=memory_window)
+        └─► context.build_messages(history, current_message, ...)
+
+        5. 运行Agent循环
+        └─► _run_agent_loop(initial_messages, on_progress)
+
+        6. 保存会话
+        ├─► _save_turn(session, all_msgs, ...)
+        └─► sessions.save(session)
+
+        7. 返回响应
+        └─► OutboundMessage
+        """
         # System messages: parse origin from chat_id ("channel:chat_id")
         if msg.channel == "system":
             channel, chat_id = (msg.chat_id.split(":", 1) if ":" in msg.chat_id
