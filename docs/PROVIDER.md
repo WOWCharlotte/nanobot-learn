@@ -240,6 +240,190 @@ class LLMResponse:
         return len(self.tool_calls) > 0
 ```
 
+
+## LiteLLMProvider 实现
+
+`LiteLLMProvider` 是 nanobot 的核心 LLM 实现，基于 **LiteLLM** 库提供多 Provider 支持。
+
+### 类定义
+
+```python
+class LiteLLMProvider(LLMProvider):
+    """
+    LLM provider using LiteLLM for multi-provider support.
+
+    Supports OpenRouter, Anthropic, OpenAI, Gemini, MiniMax, and many other providers through
+    a unified interface. Provider-specific logic is driven by the registry
+    (see providers/registry.py) — no if-elif chains needed here.
+    """
+
+    def __init__(
+        self,
+        api_key: str | None = None,
+        api_base: str | None = None,
+        default_model: str = "anthropic/claude-opus-4-5",
+        extra_headers: dict[str, str] | None = None,
+        provider_name: str | None = None,
+    ):
+```
+
+### 初始化参数
+
+| 参数 | 类型 | 说明 |
+|------|------|------|
+| `api_key` | str \| None | API Key（可选） |
+| `api_base` | str \| None | 自定义 API 端点 |
+| `default_model` | str | 默认模型 |
+| `extra_headers` | dict \| None | 额外请求头（如 APP-Code） |
+| `provider_name` | str \| None | 配置中的 Provider 名称 |
+
+### 核心方法
+
+#### 1. chat() - 发送聊天请求
+
+```python
+async def chat(
+    self,
+    messages: list[dict[str, Any]],
+    tools: list[dict[str, Any]] | None = None,
+    model: str | None = None,
+    max_tokens: int = 4096,
+    temperature: float = 0.7,
+    reasoning_effort: str | None = None,
+) -> LLMResponse:
+```
+
+**流程**：
+1. 解析模型名（应用前缀）
+2. 检查是否支持 Prompt Caching
+3. 清理消息格式
+4. 应用模型参数覆盖
+5. 调用 LiteLLM
+6. 解析响应
+
+#### 2. _resolve_model() - 模型名解析
+
+```python
+def _resolve_model(self, model: str) -> str:
+    """Resolve model name by applying provider/gateway prefixes."""
+    if self._gateway:
+        # Gateway 模式：应用网关前缀
+        prefix = self._gateway.litellm_prefix
+        if self._gateway.strip_model_prefix:
+            model = model.split("/")[-1]
+        if prefix and not model.startswith(f"{prefix}/"):
+            model = f"{prefix}/{model}"
+        return model
+
+    # Standard 模式：自动前缀
+    spec = find_by_model(model)
+    if spec and spec.litellm_prefix:
+        model = f"{spec.litellm_prefix}/{model}"
+    return model
+```
+
+**示例**：
+- `qwen-max` → `dashscope/qwen-max`（DashScope）
+- `claude-3` → `anthropic/claude-3`（Gateway 模式）
+
+#### 3. _supports_cache_control() - Prompt Caching 检测
+
+```python
+def _supports_cache_control(self, model: str) -> bool:
+    """Return True when the provider supports cache_control on content blocks."""
+    if self._gateway is not None:
+        return self._gateway.supports_prompt_caching
+    spec = find_by_model(model)
+    return spec is not None and spec.supports_prompt_caching
+```
+
+#### 4. _apply_cache_control() - 注入缓存控制
+
+```python
+def _apply_cache_control(
+    self,
+    messages: list[dict[str, Any]],
+    tools: list[dict[str, Any]] | None,
+) -> tuple[list[dict[str, Any]], list[dict[str, Any]] | None]:
+    """Return copies of messages and tools with cache_control injected."""
+```
+
+在 system message 和 tools 最后一项注入 `cache_control: {"type": "ephemeral"}`。
+
+#### 5. _sanitize_messages() - 消息清理
+
+```python
+@staticmethod
+def _sanitize_messages(
+    messages: list[dict[str, Any]],
+    extra_keys: frozenset[str] = frozenset()
+) -> list[dict[str, Any]]:
+    """Strip non-standard keys and ensure assistant messages have a content key."""
+    allowed = _ALLOWED_MSG_KEYS | extra_keys
+    # 移除不支持的键
+    # 确保 assistant 消息有 content 字段
+```
+
+#### 6. _parse_response() - 响应解析
+
+```python
+def _parse_response(self, response: Any) -> LLMResponse:
+    """Parse LiteLLM response into our standard format."""
+    choice = response.choices[0]
+    message = choice.message
+
+    # 解析 tool_calls
+    # 提取 usage
+    # 提取 reasoning_content (DeepSeek/Kimi)
+    # 提取 thinking_blocks (Anthropic)
+```
+
+### 环境变量设置
+
+```python
+def _setup_env(self, api_key: str, api_base: str | None, model: str) -> None:
+    """Set environment variables based on detected provider."""
+    spec = self._gateway or find_by_model(model)
+
+    # Gateway 覆盖环境变量；Standard 用 setdefault
+    if self._gateway:
+        os.environ[spec.env_key] = api_key
+    else:
+        os.environ.setdefault(spec.env_key, api_key)
+
+    # 处理 env_extras 占位符
+    # {api_key} → 用户 API Key
+    # {api_base} → API Base URL
+```
+
+### 模型参数覆盖
+
+```python
+def _apply_model_overrides(self, model: str, kwargs: dict[str, Any]) -> None:
+    """Apply model-specific parameter overrides from the registry."""
+    spec = find_by_model(model)
+    if spec:
+        for pattern, overrides in spec.model_overrides:
+            if pattern in model.lower():
+                kwargs.update(overrides)
+```
+
+**示例**：某些模型需要特殊 temperature 设置。
+
+### 错误处理
+
+```python
+try:
+    response = await acompletion(**kwargs)
+    return self._parse_response(response)
+except Exception as e:
+    # 优雅降级：错误信息作为 content 返回
+    return LLMResponse(
+        content=f"Error calling LLM: {str(e)}",
+        finish_reason="error",
+    )
+```
+
 ---
 
 ## 面试要点
