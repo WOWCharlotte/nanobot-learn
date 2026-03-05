@@ -653,49 +653,169 @@ async def _typing_loop(self, chat_id: str) -> None:
 
 ## 消息流程
 
-### Inbound（用户 → Agent）
+### 完整架构图
 
-```
-1. 用户在 Telegram 发送消息
-       │
-       ▼
-2. Telegram Bot API 接收到 Update
-       │
-       ▼
-3. TelegramChannel._on_message()
-       │
-       ▼
-4. is_allowed() 检查权限
-       │
-       ▼
-5. _handle_message() 创建 InboundMessage
-       │
-       ▼
-6. bus.publish_inbound() 发送到队列
-       │
-       ▼
-7. AgentLoop._process_message() 处理
+```mermaid
+sequenceDiagram
+    participant User as 用户
+    participant Platform as 平台 APP<br/>(Telegram/Discord/...)
+    participant Channel as Channel<br/>(TelegramChannel...)
+    participant Bus as MessageBus
+    participant Manager as ChannelManager
+    participant Agent as AgentLoop
+    participant LLM as LLM Provider
+
+    Note over User,LLM: Inbound 消息流程
+    User->>Platform: 发送消息
+    Platform->>Channel: Webhook/轮询 Update
+    Channel->>Channel: _on_message() 解析
+    Channel->>Channel: is_allowed() 权限检查
+    Channel->>Channel: _handle_message() 创建 InboundMessage
+    Channel->>Bus: publish_inbound(msg)
+    Bus-->>Agent: consume_inbound() 消费消息
+    Agent->>Agent: _process_message() 处理
+    Agent->>LLM: chat() 调用模型
+    LLM-->>Agent: 返回响应/tool_calls
+
+    loop 工具调用循环
+        Agent->>Agent: 执行工具
+        Agent->>LLM: 继续调用
+    end
+
+    Agent->>Bus: publish_outbound(response)
+    Bus-->>Manager: consume_outbound() 消费响应
+    Manager->>Channel: channel.send(msg)
+    Channel->>Platform: 发送消息 API
+    Platform->>User: 用户收到回复
 ```
 
-### Outbound（Agent → 用户）
+### 详细流程说明
 
+#### 1. Channel 如何接收消息？
+
+不同平台有**不同的消息接收机制**：
+
+| 平台 | 接收方式 | 说明 |
+|------|----------|------|
+| Telegram | 长轮询 | `Application.run_polling()` 持续拉取消息 |
+| Discord | Gateway | WebSocket 长连接 |
+| WhatsApp | Webhook | 服务器推送 |
+| Feishu | Webhook | 服务器推送 |
+| Slack | Socket Mode | WebSocket |
+| Email | IMAP | 定时轮询邮箱 |
+
+**以 Telegram 为例**：
+
+```python
+# TelegramChannel.start() 中启动长轮询
+await self._app.updater.start_polling(
+    allowed_updates=["message"],
+    drop_pending_updates=True
+)
+
+# 消息通过回调到达
+async def _on_message(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+    # update 包含用户发送的消息
+    await self._handle_message(...)
 ```
-1. AgentLoop 处理完成
-       │
-       ▼
-2. bus.publish_outbound() 发送 OutboundMessage
-       │
-       ▼
-3. ChannelManager._dispatch_outbound() 分发
-       │
-       ▼
-4. 查找对应的 Channel
-       │
-       ▼
-5. Channel.send() 发送到平台
-       │
-       ▼
-6. 用户收到消息
+
+#### 2. 消息如何处理传递给 Bus？
+
+```python
+async def _on_message(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """接收并解析消息"""
+    message = update.message
+    user = update.effective_user
+
+    # 1. 解析消息内容（文本+媒体）
+    content = message.text
+    media_paths = []
+
+    if message.photo:
+        # 下载图片
+        file = await self._app.bot.get_file(message.photo[-1].file_id)
+        media_paths.append(file_path)
+
+    # 2. 调用 _handle_message（权限检查+发送到 Bus）
+    await self._handle_message(
+        sender_id=str(user.id),
+        chat_id=str(message.chat_id),
+        content=content,
+        media=media_paths,
+        metadata={...}
+    )
+
+# BaseChannel 中的实现
+async def _handle_message(self, sender_id: str, chat_id: str, content: str, ...) -> None:
+    # 1. 权限检查
+    if not self.is_allowed(sender_id):
+        return
+
+    # 2. 创建 InboundMessage
+    msg = InboundMessage(
+        channel=self.name,
+        sender_id=sender_id,
+        chat_id=chat_id,
+        content=content,
+        media=media,
+        metadata=metadata
+    )
+
+    # 3. 发布到 MessageBus
+    await self.bus.publish_inbound(msg)
+```
+
+#### 3. Bus 如何与 Agent Loop 交互？
+
+**AgentLoop.run()** - 持续监听入站队列：
+
+```python
+async def run(self) -> None:
+    """Agent 核心循环"""
+    self._running = True
+
+    while self._running:
+        try:
+            # 阻塞等待消息（带超时避免无法退出）
+            msg = await asyncio.wait_for(
+                self.bus.consume_inbound(),
+                timeout=1.0
+            )
+        except asyncio.TimeoutError:
+            continue
+
+        # 为每个消息创建独立任务（支持并发）
+        task = asyncio.create_task(self._dispatch(msg))
+        self._active_tasks.setdefault(msg.session_key, []).append(task)
+
+async def _dispatch(self, msg: InboundMessage) -> None:
+    """分发消息处理"""
+    async with self._processing_lock:  # 全局锁避免并发冲突
+        try:
+            response = await self._process_message(msg)
+            if response is not None:
+                # 发布响应到出站队列
+                await self.bus.publish_outbound(response)
+        except Exception as e:
+            # 错误处理
+            await self.bus.publish_outbound(OutboundMessage(...))
+```
+
+**ChannelManager._dispatch_outbound()** - 监听出站队列：
+
+```python
+async def _dispatch_outbound(self) -> None:
+    """分发出站消息"""
+    while True:
+        msg = await asyncio.wait_for(
+            self.bus.consume_outbound(),
+            timeout=1.0
+        )
+
+        # 查找对应 Channel
+        channel = self.channels.get(msg.channel)
+        if channel:
+            await channel.send(msg)
 ```
 
 ---
