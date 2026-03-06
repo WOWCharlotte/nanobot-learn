@@ -15,7 +15,7 @@
 
 ### 2025-03 新增：Learn Mode 学习模式
 
-新增 `learn` 命令，提供两种学习模式：
+新增 `learn` 命令和内置 `nanobot-learn` skill，提供两种学习模式：
 
 ```bash
 # 老师模式 - 交互式问答
@@ -32,11 +32,13 @@ nanobot learn --mode quiz
 nanobot learn --mode quiz --day Day3
 ```
 
-交互式命令：
+**交互式命令：**
 - `/mode teacher` - 切换到老师模式
 - `/mode quiz` - 切换到面试官模式
 - `/stats` - 查看学习进度
 - `/exit` - 退出学习模式
+
+**内置 Skill：** `nanobot-learn` skill 会自动加载到 Agent 上下文中，用户可在任意社交媒体渠道（Discord、Telegram、Slack 等）直接使用 learn 功能。
 
 ---
 
