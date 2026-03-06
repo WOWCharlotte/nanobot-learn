@@ -17,6 +17,114 @@
 
 ---
 
+## 交互流程图
+
+```mermaid
+sequenceDiagram
+    participant User as 用户
+    participant MQ as MessageQueue
+    participant SM as SessionManager
+    participant CB as ContextBuilder
+    participant LLM as LLM Provider
+    participant TR as ToolRegistry
+    participant Tools as 各类工具
+    participant MB as MessageBus
+    participant Mem as Memory
+    participant MC as MemoryConsolidation
+
+    Note over User,MC: 阶段1: 消息接收与初始化
+    User->>MQ: 用户消息
+    MQ->>SM: 分发消息
+    SM->>SM: 获取/创建会话
+    SM->>CB: 构建Prompt
+
+    Note over User,MC: 阶段2: LLM调用循环
+    CB->>LLM: 发送Prompt
+    LLM-->>CB: 返回响应
+    CB->>CB: 解析tool_calls
+
+    alt 有工具调用
+        loop 遍历tool_calls
+            CB->>TR: 请求执行工具
+            TR->>Tools: 定位并执行工具
+            Tools-->>TR: 返回结果(截断至500字符)
+            TR-->>CB: 返回结果
+            CB->>LLM: 发送工具结果
+            LLM-->>CB: 再次响应(可能继续调用或结束)
+        end
+    else 无工具调用
+        CB->>SM: 最终响应
+    end
+
+    Note over User,MC: 阶段3: 响应发送与记忆存储
+    SM->>MB: 发送消息
+    MB->>User: 推送至用户渠道
+
+    SM->>Mem: 存储对话
+    Mem->>Mem: 检查unconsolidated计数
+    alt 达到memory_window阈值
+        Mem->>MC: 触发异步压缩
+        MC-->>Mem: 完成后清理旧消息
+    end
+
+    Note over User,MC: 阶段4: 命令处理
+    alt 用户输入/stop命令
+        SM->>SM: 追踪asyncio.Task
+        SM->>SM: 取消主任务和子Agent
+    end
+```
+
+---
+
+## 核心函数依赖关系
+
+```mermaid
+flowchart TD
+    %% 入口函数
+    A1[run<br/>消息监听入口] --> A2[_dispatch<br/>消息分发]
+    A2 --> A3{命令判断}
+
+    %% 命令处理分支
+    A3 -->|stop命令| A4[_handle_stop<br/>处理/stop]
+    A3 -->|普通消息| A5[_process_message<br/>消息处理核心]
+
+    %% 消息处理
+    A5 --> A6[_run_agent_loop<br/>Agent循环]
+    A6 --> A7[LLM调用]
+    A7 --> A8{tool_calls?}
+
+    %% 工具调用循环
+    A8 -->|有调用| A9[工具执行]
+    A9 --> A7
+    A8 -->|无调用| A10[_bus_progress<br/>进度通知]
+
+    %% 响应与存储
+    A10 --> A11[_save_turn<br/>保存对话]
+    A11 --> A12{memory_window?}
+
+    %% 记忆压缩
+    A12 -->|达到阈值| A13[_consolidate_memory<br/>异步压缩]
+    A12 -->|未达到| A14((结束))
+    A13 -.->|异步完成| A14
+
+    %% 启动初始化
+    S1[__init__] --> S2[_connect_mcp<br/>连接MCP]
+    S2 --> S3[_register_default_tools<br/>注册工具]
+    S3 --> A1
+
+    %% 样式
+    classDef entry fill:#e1f5fe,stroke:#0277bd,stroke-width:2px
+    classDef core fill:#fff3e0,stroke:#ef6c00,stroke-width:2px
+    classDef tool fill:#e8f5e9,stroke:#2e7d32,stroke-width:2px
+    classDef memory fill:#fce4ec,stroke:#c2185b,stroke-width:2px
+
+    class A1,A2,A3 entry
+    class A5,A6,A7,A8,A9,A10,A11 core
+    class A13 memory
+```
+
+---
+
 ## 类：AgentLoop
 
 ### 初始化 (`__init__`)

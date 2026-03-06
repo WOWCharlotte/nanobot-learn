@@ -11,6 +11,35 @@
   </p>
 </div>
 
+## News
+
+### 2025-03 新增：Learn Mode 学习模式
+
+新增 `learn` 命令，提供两种学习模式：
+
+```bash
+# 老师模式 - 交互式问答
+nanobot learn
+
+# 指定 Day 学习
+nanobot learn --day Day2
+
+# 单次模式 - 直接问问题
+nanobot learn --message "Agent Loop 是如何工作的？"
+
+# 面试官模式 - 答题测验
+nanobot learn --mode quiz
+nanobot learn --mode quiz --day Day3
+```
+
+交互式命令：
+- `/mode teacher` - 切换到老师模式
+- `/mode quiz` - 切换到面试官模式
+- `/stats` - 查看学习进度
+- `/exit` - 退出学习模式
+
+---
+
 ## 简介
 
 **nanobot** 是一个超轻量级的个人 AI 助手，仅用约 **4,000** 行核心代码实现了完整的 Agent 功能。本学习指南旨在通过七天的系统学习，帮助开发者全面掌握 nanobot 的实现原理，达到能够独立开发和扩展的能力。

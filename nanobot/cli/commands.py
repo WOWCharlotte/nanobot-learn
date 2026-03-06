@@ -907,5 +907,232 @@ def _login_github_copilot() -> None:
         raise typer.Exit(1)
 
 
+# ============================================================================
+# Learn Commands
+# ============================================================================
+
+
+@app.command()
+def learn(
+    mode: str = typer.Option("teacher", "--mode", "-m",
+              help="学习模式: teacher(老师) 或 quiz(面试官)"),
+    day: str = typer.Option(None, "--day", "-d",
+              help="指定学习天数 (Day1-Day7)"),
+    message: str = typer.Option(None, "--message", help="直接传入问题（单次模式）"),
+):
+    """Nanobot 学习模式 - 老师讲解/面试官问答"""
+    from nanobot.config.loader import load_config
+    from nanobot.learn.engine import LearnEngine, load_docs_content
+
+    # 验证 day 参数
+    valid_days = {"Day1", "Day2", "Day3", "Day4", "Day5", "Day6", "Day7", "1", "2", "3", "4", "5", "6", "7"}
+    if day and day not in valid_days and f"Day{day}" not in valid_days:
+        console.print(f"[red]无效的 Day: {day}[/red]")
+        console.print("有效的值: Day1-Day7")
+        raise typer.Exit(1)
+
+    # 标准化 day 参数
+    if day and day.isdigit():
+        day = f"Day{day}"
+
+    config = load_config()
+    provider = _make_provider(config)
+
+    # 如果有 message，直接执行单次模式
+    if message:
+        from nanobot.learn.engine import load_docs_content
+
+        docs_content = load_docs_content([day] if day else None)
+
+        # 构建系统提示
+        system_prompt = f"""你是一个 Nanobot 技术专家导师。请基于以下文档内容回答用户的问题。
+
+## 文档内容
+{docs_content}
+
+请用中文回答，如果文档中有相关内容，请引用相关知识点。"""
+
+        async def run_once():
+            response = await provider.chat(
+                messages=[
+                    {"role": "system", "content": system_prompt},
+                    {"role": "user", "content": message}
+                ],
+                max_tokens=4096,
+            )
+            return response.content
+
+        response = asyncio.run(run_once())
+        _print_agent_response(response, render_markdown=True)
+        return
+
+    # 交互式模式
+    engine = LearnEngine(mode=mode)
+
+    if mode == "teacher":
+        welcome = engine.start_teacher_mode(day)
+    else:
+        welcome = engine.start_quiz_mode(day)
+
+    console.print(f"\n{__logo__} 学习模式\n")
+    console.print(Markdown(welcome))
+
+    # 初始化交互式输入
+    _init_prompt_session()
+
+    def _exit_on_sigint(signum, frame):
+        _restore_terminal()
+        console.print("\n\n退出学习模式，再见！")
+        os._exit(0)
+
+    signal.signal(signal.SIGINT, _exit_on_sigint)
+
+    # 使用可变容器来在嵌套函数中追踪模式
+    mode_state = {"mode": mode}
+
+    async def run_learn_interactive():
+        import uuid
+
+        # 引用外部的 mode_state
+        current_mode = mode_state["mode"]
+
+        # 获取 docs 内容
+        days = [day] if day else [f"Day{i}" for i in range(1, 8)]
+        docs_content = load_docs_content(days)
+
+        # 构建系统提示
+        teacher_system = f"""你是一个 Nanobot 技术专家导师。请基于以下文档内容回答用户的问题。
+
+## 文档内容
+{docs_content}
+
+请用中文回答，如果文档中有相关内容，请引用相关知识点。回答要简洁明了。"""
+
+        quiz_system = """你是一个技术面试官。你需要：
+1. 向用户提问技术问题
+2. 根据用户的回答打分 (0-100)
+3. 给出改进建议
+
+请用中文回复，保持专业和鼓励的态度。"""
+
+        current_system = teacher_system if current_mode == "teacher" else quiz_system
+        conversation_id = str(uuid.uuid4())
+        messages = [{"role": "system", "content": current_system}]
+
+        try:
+            while True:
+                _flush_pending_tty_input()
+                user_input = await _read_interactive_input_async()
+                command = user_input.strip()
+
+                if not command:
+                    continue
+
+                # 处理特殊命令
+                if command.lower() in EXIT_COMMANDS:
+                    _restore_terminal()
+                    console.print("\n退出学习模式，再见！")
+                    break
+
+                # 模式切换命令
+                if command.startswith("/mode"):
+                    parts = command.split()
+                    if len(parts) >= 2:
+                        new_mode = parts[1]
+                        if new_mode in ("teacher", "quiz"):
+                            mode_state["mode"] = new_mode
+                            current_mode = new_mode
+                            if current_mode == "teacher":
+                                welcome = engine.start_teacher_mode(day)
+                                current_system = teacher_system
+                                messages = [{"role": "system", "content": current_system}]
+                                console.print(Markdown(welcome))
+                            else:
+                                welcome = engine.start_quiz_mode(day)
+                                current_system = quiz_system
+                                messages = [{"role": "system", "content": current_system}]
+                                console.print(Markdown(welcome))
+                                # 发送第一个问题
+                                question = engine.get_next_question(day)
+                                messages.append({"role": "assistant", "content": question})
+                                console.print(Markdown(f"\n**面试官:**\n{question}"))
+                            continue
+                        else:
+                            console.print(f"[red]无效模式: {new_mode}，可选: teacher, quiz[/red]")
+                            continue
+
+                # 查看统计命令
+                if command == "/stats":
+                    stats = engine.get_stats()
+                    console.print(Markdown(stats))
+                    continue
+
+                # 学习模式处理
+                if current_mode == "teacher":
+                    # 老师模式 - 直接回答问题
+                    messages.append({"role": "user", "content": command})
+
+                    with console.status("[dim]思考中...[/dim]", spinner="dots"):
+                        response = await provider.chat(
+                            messages=messages,
+                            max_tokens=4096,
+                        )
+                        response_content = response.content
+
+                    messages.append({"role": "assistant", "content": response_content})
+                    _print_agent_response(response_content, render_markdown=True)
+
+                else:
+                    # 面试官模式
+                    # 先评估用户回答
+                    evaluation = engine.evaluate_answer(command)
+                    messages.append({"role": "user", "content": f"用户回答: {command}\n\n请评估并打分:"})
+
+                    with console.status("[dim]评估中...[/dim]", spinner="dots"):
+                        response = await provider.chat(
+                            messages=messages,
+                            max_tokens=4096,
+                        )
+                        response_content = response.content
+
+                    messages.append({"role": "assistant", "content": response_content})
+
+                    # 提取分数（简单解析）
+                    score = 70  # 默认分数
+                    import re
+                    score_match = re.search(r"(\d+)/100", response_content)
+                    if score_match:
+                        score = int(score_match.group(1))
+
+                    # 记录答题
+                    if engine.current_question:
+                        engine.record_answer(
+                            engine.current_question,
+                            command,
+                            score,
+                            response_content
+                        )
+
+                    # 打印评估结果
+                    console.print()
+                    console.print(f"[bold cyan]面试官评估:[/bold cyan]")
+                    console.print(Markdown(response_content))
+
+                    # 询问是否继续
+                    console.print("\n[dim]输入下一题或切换模式...[/dim]")
+                    question = engine.get_next_question(day)
+                    messages.append({"role": "assistant", "content": question})
+                    console.print(Markdown(f"\n**面试官:**\n{question}"))
+
+        except KeyboardInterrupt:
+            _restore_terminal()
+            console.print("\n\n退出学习模式，再见！")
+        except EOFError:
+            _restore_terminal()
+            console.print("\n\n退出学习模式，再见！")
+
+    asyncio.run(run_learn_interactive())
+
+
 if __name__ == "__main__":
     app()
