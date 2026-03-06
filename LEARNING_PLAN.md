@@ -32,12 +32,14 @@
    └── cli/            # CLI命令
    ```
 
-**下午：配置系统
+**下午：配置系统**
 **目标**：理解配置如何加载和验证
 
 **关键文件**：
 - `config/schema.py` - Pydantic配置模型（重点：`Config`、`ProvidersConfig`、`ChannelConfig`）
 - `config/loader.py` - 配置加载逻辑
+
+> 📖 详细讲解：[docs/Day1/README.md](./docs/Day1/README.md)
 
 **学习要点**：
 - Pydantic模型的嵌套结构
@@ -58,7 +60,7 @@
 **关键文件**：
 - `agent/loop.py` (510行) - **最核心的文件**
 
-> 📖 详细讲解：[docs/AGENT_LOOP.md](./docs/AGENT_LOOP.md)
+> 📖 详细讲解：[docs/Day2/AGENT_LOOP.md](./docs/Day2/AGENT_LOOP.md)
 
 **核心流程**：
 ```
@@ -79,7 +81,7 @@
 **关键文件**：
 - `agent/context.py` (174行)
 
-> 📖 详细讲解：[docs/CONTEXT.md](./docs/CONTEXT.md)
+> 📖 详细讲解：[docs/Day2/CONTEXT.md](./docs/Day2/CONTEXT.md)
 
 **学习要点**：
 - System Prompt的组成（identity、bootstrap、memory、skills）
@@ -101,7 +103,7 @@
 **关键文件**：
 - `agent/memory.py` (151行)
 
-> 📖 详细讲解：[docs/MEMORY.md](./docs/MEMORY.md)
+> 📖 详细讲解：[docs/Day3/MEMORY.md](./docs/Day3/MEMORY.md)
 
 **核心概念**：
 - `MEMORY.md` - 长期持久化的事实（只增不减）
@@ -119,7 +121,7 @@
 **关键文件**：
 - `session/manager.py` (213行)
 
-> 📖 详细讲解：[docs/SESSION.md](./docs/SESSION.md)
+> 📖 详细讲解：[docs/Day3/SESSION.md](./docs/Day3/SESSION.md)
 
 **学习要点**：
 - 消息的追加写入模式（append-only）
@@ -142,8 +144,8 @@
 - `agent/skills.py` (229行) - 技能加载器
 
 > 📖 详细讲解：
-> - [docs/TOOL.md](./docs/TOOL.md) - Tool系统
-> - [docs/SKILLS.md](./docs/SKILLS.md) - Skills系统
+> - [docs/Day4/TOOL.md](./docs/Day4/TOOL.md) - Tool系统
+> - [docs/Day4/SKILLS.md](./docs/Day4/SKILLS.md) - Skills系统
 
 **学习要点 - Tool系统**：
 - Tool接口定义（name、description、parameters）
@@ -191,7 +193,7 @@
 6. `agent/subagent.py` (247行) - 子Agent管理
 
 > 📖 详细讲解：
-> - [docs/SUBAGENT.md](./docs/SUBAGENT.md) - Subagent系统
+> - [docs/Day4/SUBAGENT.md](./docs/Day4/SUBAGENT.md) - Subagent系统
 
 **学习要点 - 内置工具**：
 - ExecTool安全机制详解
@@ -220,7 +222,7 @@
 - `providers/registry.py` (463行) - **非常重要**
 - `providers/base.py` - Provider接口
 
-> 📖 详细讲解：[docs/PROVIDER.md](./docs/PROVIDER.md)
+> 📖 详细讲解：[docs/Day5/PROVIDER.md](./docs/Day5/PROVIDER.md)
 
 **学习要点**：
 - `ProviderSpec` - Provider元数据定义
@@ -262,7 +264,7 @@
 - `channels/base.py` - Channel基类
 - `channels/manager.py` - Channel管理
 
-> 📖 详细讲解：[docs/CHANNEL.md](./docs/CHANNEL.md)
+> 📖 详细讲解：[docs/Day6/CHANNEL.md](./docs/Day6/CHANNEL.md)
 
 **核心概念**：
 - 继承 `BaseChannel`
@@ -314,7 +316,7 @@
 - `cron/service.py` - Cron 服务
 - `heartbeat/service.py` - Heartbeat 服务
 
-> 📖 详细讲解：[docs/CLI_CRON_HEARTBEAT.md](./docs/CLI_CRON_HEARTBEAT.md)
+> 📖 详细讲解：[docs/Day7/CLI_CRON_HEARTBEAT.md](./docs/Day7/CLI_CRON_HEARTBEAT.md)
 
 **学习要点 - Cron**：
 - 支持 `at`、`every`、`cron` 三种调度模式
