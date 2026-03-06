@@ -80,16 +80,16 @@ nanobot learn --mode quiz --day Day3
 
 ### 核心概念文档
 
-- [Agent Loop 详解](./docs/AGENT_LOOP.md) - LLM 与工具的循环调用
-- [Context 构建](./docs/CONTEXT.md) - Prompt 生成机制
-- [Memory 系统](./docs/MEMORY.md) - 两层记忆设计
-- [Session 管理](./docs/SESSION.md) - 会话持久化
-- [Tool 系统](./docs/TOOL.md) - 工具注册和执行
-- [Skills 系统](./docs/SKILLS.md) - 技能加载器
-- [Subagent 系统](./docs/SUBAGENT.md) - 子 Agent 管理
-- [Provider 架构](./docs/PROVIDER.md) - 多 LLM 支持
-- [Channel 系统](./docs/CHANNEL.md) - 聊天平台集成
-- [CLI/Cron/Heartbeat](./docs/CLI_CRON_HEARTBEAT.md) - CLI 命令、定时任务与心跳
+- [Agent Loop 详解](./docs/Day2/AGENT_LOOP.md) - LLM 与工具的循环调用
+- [Context 构建](./docs/Day2/CONTEXT.md) - Prompt 生成机制
+- [Memory 系统](./docs/Day3/MEMORY.md) - 两层记忆设计
+- [Session 管理](./docs/Day3/SESSION.md) - 会话持久化
+- [Tool 系统](./docs/Day4/TOOL.md) - 工具注册和执行
+- [Skills 系统](./docs/Day4/SKILLS.md) - 技能加载器
+- [Subagent 系统](./docs/Day4/SUBAGENT.md) - 子 Agent 管理
+- [Provider 架构](./docs/Day5/PROVIDER.md) - 多 LLM 支持
+- [Channel 系统](./docs/Day6/CHANNEL.md) - 聊天平台集成
+- [CLI/Cron/Heartbeat](./docs/Day7/CLI_CRON_HEARTBEAT.md) - CLI 命令、定时任务与心跳
 
 ### 项目结构
 
