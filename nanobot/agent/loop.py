@@ -394,10 +394,12 @@ class AgentLoop:
             self._consolidating.add(session.key)
             try:
                 async with lock:
+                    # 获取未压缩的消息
                     snapshot = session.messages[session.last_consolidated:]
                     if snapshot:
                         temp = Session(key=session.key)
                         temp.messages = list(snapshot)
+                        # 触发压缩，利用LLM为当前会话信息生成简短摘要，持久化保存至History.md文档，并更新last_consolidated索引
                         if not await self._consolidate_memory(temp, archive_all=True):
                             return OutboundMessage(
                                 channel=msg.channel, chat_id=msg.chat_id,

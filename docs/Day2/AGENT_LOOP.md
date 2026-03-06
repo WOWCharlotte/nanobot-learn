@@ -76,54 +76,7 @@ sequenceDiagram
 
 ---
 
-## 核心函数依赖关系
 
-```mermaid
-flowchart TD
-    %% 入口函数
-    A1[run<br/>消息监听入口] --> A2[_dispatch<br/>消息分发]
-    A2 --> A3{命令判断}
-
-    %% 命令处理分支
-    A3 -->|stop命令| A4[_handle_stop<br/>处理/stop]
-    A3 -->|普通消息| A5[_process_message<br/>消息处理核心]
-
-    %% 消息处理
-    A5 --> A6[_run_agent_loop<br/>Agent循环]
-    A6 --> A7[LLM调用]
-    A7 --> A8{tool_calls?}
-
-    %% 工具调用循环
-    A8 -->|有调用| A9[工具执行]
-    A9 --> A7
-    A8 -->|无调用| A10[_bus_progress<br/>进度通知]
-
-    %% 响应与存储
-    A10 --> A11[_save_turn<br/>保存对话]
-    A11 --> A12{memory_window?}
-
-    %% 记忆压缩
-    A12 -->|达到阈值| A13[_consolidate_memory<br/>异步压缩]
-    A12 -->|未达到| A14((结束))
-    A13 -.->|异步完成| A14
-
-    %% 启动初始化
-    S1[__init__] --> S2[_connect_mcp<br/>连接MCP]
-    S2 --> S3[_register_default_tools<br/>注册工具]
-    S3 --> A1
-
-    %% 样式
-    classDef entry fill:#e1f5fe,stroke:#0277bd,stroke-width:2px
-    classDef core fill:#fff3e0,stroke:#ef6c00,stroke-width:2px
-    classDef tool fill:#e8f5e9,stroke:#2e7d32,stroke-width:2px
-    classDef memory fill:#fce4ec,stroke:#c2185b,stroke-width:2px
-
-    class A1,A2,A3 entry
-    class A5,A6,A7,A8,A9,A10,A11 core
-    class A13 memory
-```
-
----
 
 ## 类：AgentLoop
 
@@ -178,30 +131,49 @@ self._processing_lock              # 全局处理锁
 
 ## 核心函数依赖关系
 
-```
-run()                    # 主循环入口
-    │
-    ├─► _connect_mcp()          # 连接MCP服务器
-    │
-    └─► consume_inbound()       # 消费消息
-            │
-            ├─► _handle_stop()      # 处理 /stop 命令
-            │
-            └─► _dispatch()         # 分发处理
-                    │
-                    └─► _process_message()  # 处理单条消息
-                            │
-                            ├─► sessions.get_or_create()     # 获取/创建会话
-                            ├─► context.build_messages()      # 构建消息
-                            ├─► _run_agent_loop()              # 核心循环
-                            │       │
-                            │       ├─► provider.chat()       # 调用LLM
-                            │       ├─► tools.execute()       # 执行工具
-                            │       └─► context.add_*()       # 添加消息
-                            │
-                            ├─► _save_turn()             # 保存回合
-                            ├─► sessions.save()          # 持久化会话
-                            └─► _consolidate_memory()    # 整合记忆
+```mermaid
+flowchart TD
+    %% 入口函数
+    A1[run<br/>消息监听入口] --> A2[_dispatch<br/>消息分发]
+    A2 --> A3{命令判断}
+
+    %% 命令处理分支
+    A3 -->|stop命令| A4[_handle_stop<br/>处理/stop]
+    A3 -->|普通消息| A5[_process_message<br/>消息处理核心]
+
+    %% 消息处理
+    A5 --> A6[_run_agent_loop<br/>Agent循环]
+    A6 --> A7[LLM调用]
+    A7 --> A8{tool_calls?}
+
+    %% 工具调用循环
+    A8 -->|有调用| A9[工具执行]
+    A9 --> A7
+    A8 -->|无调用| A10[_bus_progress<br/>进度通知]
+
+    %% 响应与存储
+    A10 --> A11[_save_turn<br/>保存对话]
+    A11 --> A12{memory_window?}
+
+    %% 记忆压缩
+    A12 -->|达到阈值| A13[_consolidate_memory<br/>异步压缩]
+    A12 -->|未达到| A14((结束))
+    A13 -.->|异步完成| A14
+
+    %% 启动初始化
+    S1[__init__] --> S2[_connect_mcp<br/>连接MCP]
+    S2 --> S3[_register_default_tools<br/>注册工具]
+    S3 --> A1
+
+    %% 样式
+    classDef entry fill:#e1f5fe,stroke:#0277bd,stroke-width:2px
+    classDef core fill:#fff3e0,stroke:#ef6c00,stroke-width:2px
+    classDef tool fill:#e8f5e9,stroke:#2e7d32,stroke-width:2px
+    classDef memory fill:#fce4ec,stroke:#c2185b,stroke-width:2px
+
+    class A1,A2,A3 entry
+    class A5,A6,A7,A8,A9,A10,A11 core
+    class A13 memory
 ```
 
 ---
@@ -403,33 +375,18 @@ async def _run_agent_loop(
 
 **迭代流程图**：
 
-```
-┌─────────────────────────────────────────────┐
-│              iteration = 0                  │
-└─────────────────┬───────────────────────────┘
-                  │
-                  ▼
-         ┌────────────────┐
-         │   LLM.chat()   │
-         └───────┬────────┘
-                 │
-         ┌──────▼──────┐
-         │ has_tool_calls? │
-         └──────┬──────┘
-            Yes │ No
-     ┌──────────┴──────────┐
-     ▼                     ▼
-┌─────────────┐    ┌────────────────┐
-│ Execute Tool│    │ return content │
-│ add_result  │    │    break       │
-└──────┬──────┘    └────────────────┘
-       │ continue loop
-       ▼
-┌──────────────┐
-│ next iteration│
-└──────┬───────┘
-       │ < max_iterations
-       └──────────────►
+```mermaid
+flowchart TB
+    A("iteration = 0") --> B
+    B["LLM.chat"]
+    B --> C{has_tool_calls?}
+    C -->|Yes| D["Execute Tool"]
+    C -->|No| E["return content"]
+    D --> F["add result to context"]
+    F --> G["next iteration"]
+    G --> H{iteration<br/>&lt; max?}
+    H -->|Yes| B
+    H -->|No| E
 ```
 
 ---
@@ -539,8 +496,7 @@ def _register_default_tools(self) -> None:
 ## 面试要点
 
 1. **为什么用全局锁 `_processing_lock`？**
-   - 防止并发处理导致会话状态混乱
-   - 简化上下文管理的复杂性
+   > AgentLoop 中的全局 `_processing_lock` 防止并发消息处理期间的竞态条件，但允许跨不同会话的并行处理。这种设计选择在数据完整性和响应性之间取得了平衡，尽管它会对任何给定的对话线程的处理进行序列化
 
 2. **Memory Consolidation 何时触发？**
    - `unconsolidated >= memory_window`（默认100条消息）
