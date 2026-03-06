@@ -233,6 +233,7 @@ Stay focused on the assigned task. Your final response will be reported back to 
     
     async def cancel_by_session(self, session_key: str) -> int:
         """Cancel all subagents for the given session. Returns count cancelled."""
+        # 根据`session_key`查找相关任务ID，收集进行中的任务并取消它们，最后返回取消的任务数量
         tasks = [self._running_tasks[tid] for tid in self._session_tasks.get(session_key, [])
                  if tid in self._running_tasks and not self._running_tasks[tid].done()]
         for t in tasks:

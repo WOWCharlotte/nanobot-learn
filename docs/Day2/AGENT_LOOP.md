@@ -504,7 +504,21 @@ def _register_default_tools(self) -> None:
 
 3. **如何处理 `/stop` 命令？**
    - 通过 `asyncio.Task` 追踪活跃任务
-   - 可以取消主任务和所有子agent
+   - 根据`session_key`删除主/子代理任务
+   - 主代理通过`cancel()`函数取消任务
+   - 子代理通过`cancel_by_session()`函数取消任务
+   ```python
+   # 根据`session_key`查找相关任务ID，收集进行中的任务并取消它们，最后返回取消的任务数量
+   async def cancel_by_session(self, session_key: str) -> int:
+        """Cancel all subagents for the given session. Returns count cancelled."""
+        tasks = [self._running_tasks[tid] for tid in self._session_tasks.get(session_key, [])
+                 if tid in self._running_tasks and not self._running_tasks[tid].done()]
+        for t in tasks:
+            t.cancel()
+        if tasks:
+            await asyncio.gather(*tasks, return_exceptions=True)
+        return len(tasks)
+   ```
 
 4. **为什么截断工具结果？**
    - 防止超过 LLM context 限制
@@ -515,6 +529,44 @@ def _register_default_tools(self) -> None:
    - 达到 `max_iterations` 上限
    - LLM 返回错误
 
+6. **一次完整的交互流程？**
+    - 用户在应用APP中发生消息
+    - 消息入队
+    - AgentLoop 监控消息队列并消费入队消息
+        - `asyncio.wait_for`持续监控消息队列
+        - `bus.consume_inbound()`消费入队消息
+    - 识别`/stop`命令，使用`_handle_stop()`取消所有进行中的任务
+    - `_dispatch(msg)`分发消息
+        - `_process_message(msg)`处理单次任务
+        ```
+        1. System消息处理
+                └─► 解析channel:chat_id
+                └─► 特殊处理
+
+        2. Slash命令
+        ├─► /new  - 立即整合记忆，开启新会话
+        └─► /help - 显示帮助
+
+        3. 记忆整合触发
+        └─► 如果 unconsolidated >= memory_window
+        └─► 异步触发 _consolidate_memory()
+
+        4. 构建消息
+        ├─► session.get_history(max_messages=memory_window)
+        └─► context.build_messages(history, current_message, ...)
+
+        5. 运行Agent循环
+        └─► _run_agent_loop(initial_messages, on_progress)
+
+        6. 保存会话
+        ├─► _save_turn(session, all_msgs, ...)
+        └─► sessions.save(session)
+
+        7. 返回响应
+        └─► OutboundMessage
+        ```
+  6. `_active_tasks()`增加任务
+  7. `add_done_callback()`处理完成好的任务
 ---
 
 ## 文件位置
