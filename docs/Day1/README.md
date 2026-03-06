@@ -1,12 +1,13 @@
 # Day 1: 项目结构与配置系统
 
-> 本文档是 [LEARNING_PLAN.md](../LEARNING_PLAN.md) Day 1 的补充材料
+> 本文档是 [LEARNING_PLAN.md](../../LEARNING_PLAN.md) Day 1 的补充材料
 
 ---
 
 ## 1. 项目概览
 
 ### 什么是 nanobot？
+![nanobot_arch](../../nanobot_arch.png)
 
 **nanobot** 是 HKUDS 开源的**超轻量级个人 AI 助手**，核心代码仅 **~4,000 行**，比 Clawdbot 小 99%。
 
