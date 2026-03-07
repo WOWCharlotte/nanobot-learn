@@ -1,6 +1,6 @@
 # Provider System 深入解析
 
-> 本文档是 [LEARNING_PLAN.md](./LEARNING_PLAN.md) Day 5 的补充材料
+> 本文档是 [LEARNING_PLAN.md](../../LEARNING_PLAN.md) Day 5 的补充材料
 
 ## 概述
 
@@ -448,6 +448,82 @@ except Exception as e:
 5. **OAuth Provider 如何处理？**
    - 不使用 API Key
    - 使用 OAuth 流程获取 Token
+
+6. **LiteLLM 是什么？为何使用？**
+   - 开源库，统一多 LLM API 接口
+   - 无需为每个 Provider 编写适配代码
+   - 自动处理 API 差异（认证、格式、错误等）
+   - nanobot 通过 LiteLLM 支持 100+ LLM
+
+7. **模型自动检测的优先级？**
+   - 1. 精确匹配（模型前缀 = Provider 名称）
+   - 2. 关键词匹配（模型名包含 Provider 关键词）
+   - 3. API Key 前缀检测（如 `sk-or-` → OpenRouter）
+   - 4. API Base URL 关键词检测（如 `openrouter`）
+
+8. **Prompt Caching 是什么？如何启用？**
+   - Anthropic 提出的缓存优化技术
+   - 重复的 System Prompt 和 Tool 定义缓存，减少 Token 费用
+   - 通过 `cache_control: {"type": "ephemeral"}` 标记
+   - 在 system message 和最后一条 tool 注入
+   - 需要 Provider 支持（如 Anthropic）
+
+9. **模型参数覆盖（model_overrides）的用途？**
+   - 某些模型需要特殊参数
+   - 示例：`kimi-k2.5` 需要 `temperature: 1.0`
+   - 在 ProviderSpec 中配置 `(pattern, overrides)` 元组列表
+
+10. **API Key 优先级？**
+    - 1. config.json 中的 apiKey
+    - 2. 环境变量（如 `OPENAI_API_KEY`）
+    - 3. OAuth Token（OAuth Provider）
+    - Gateway 用 `os.environ[key] = value` 覆盖
+    - Standard 用 `setdefault` 保留已设置值
+
+11. **错误处理策略？**
+    - LiteLLM 调用异常被捕获
+    - 错误信息作为 content 返回，不中断流程
+    - finish_reason 设为 "error"
+    - Agent 可根据错误信息尝试其他方法
+
+12. **为什么用 frozen dataclass？**
+    - ProviderSpec 定义后不可变
+    - 防止运行时被意外修改
+    - 保证行为一致性
+
+13. **如何判断 Provider 是否支持某个模型？**
+    - Gateway：理论上支持所有模型
+    - Standard：需要模型匹配关键词
+    - 可通过 `nanobot status` 查看当前配置的 Provider
+
+14. **多 Provider 如何切换？**
+    - 修改 config.json 中的 `agents.defaults.provider`
+    - 或在模型名中指定：`model: "openai/gpt-4o"`
+    - nanobot 会自动检测正确的 Provider
+
+15. **本地部署模型（vLLM）如何配置？**
+    - 使用 vLLM 启动兼容 OpenAI API 的服务器
+    - 配置 apiBase 为服务器地址（如 `http://localhost:8000/v1`）
+    - apiKey 可任意设置（本地无需认证）
+
+16. **Provider 配置的完整字段？**
+    ```json
+    {
+      "providers": {
+        "openrouter": {
+          "apiKey": "sk-or-xxx",
+          "apiBase": "https://openrouter.ai/api/v1"
+        }
+      }
+    }
+    ```
+    - apiKey：API 密钥
+    - apiBase：自定义端点（可选）
+
+17. **reasoning_content vs thinking_blocks 区别？**
+    - reasoning_content：DeepSeek、Kimi 的推理过程（字符串）
+    - thinking_blocks：Anthropic 的推理过程（结构化块）
+    - 两者都是模型的"思考"过程，仅展示方式不同
 
 ---
 
