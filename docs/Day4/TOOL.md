@@ -1,6 +1,6 @@
 # Tool System 深入解析
 
-> 本文档是 [LEARNING_PLAN.md](./LEARNING_PLAN.md) Day 4 的补充材料
+> 本文档是 [LEARNING_PLAN.md](../../LEARNING_PLAN.md) Day 4 的补充材料
 
 ## 概述
 
@@ -53,6 +53,8 @@ nanobot 的 **Tool 系统** 是 Agent 与外部世界交互的桥梁，包含：
 ## 1. Tool 基类 (base.py)
 
 ### 核心接口
+- [Tool](../../nanobot/agent/tools/base.py)
+- [Tool Registry](../../nanobot/agent/tools/registry.py)
 
 ```python
 class Tool(ABC):
@@ -316,15 +318,350 @@ class ExecTool(Tool):
 
 ---
 
-### 3.3 其他工具
+### 3.3 网页工具 (web.py)
 
-| 工具 | 文件 | 功能 |
+#### WebSearchTool - 网页搜索
+
+```python
+class WebSearchTool(Tool):
+    name = "web_search"
+    description = "Search the web. Returns titles, URLs, and snippets."
+
+    async def execute(self, query: str, count: int | None = None, **kwargs) -> str:
+        # 调用 Brave Search API
+        # 返回搜索结果标题、URL 和摘要
+```
+
+**功能**：
+- 使用 Brave Search API 进行网页搜索
+- 返回标题、URL 和描述摘要
+- 支持配置结果数量（1-10）
+
+**配置**：
+```json
+{
+  "tools": {
+    "web": {
+      "search": {
+        "apiKey": "YOUR_BRAVE_API_KEY"
+      }
+    }
+  }
+}
+```
+
+#### WebFetchTool - 网页抓取
+
+```python
+class WebFetchTool(Tool):
+    name = "web_fetch"
+    description = "Fetch URL and extract readable content (HTML → markdown/text)."
+
+    async def execute(self, url: str, extractMode: str = "markdown", maxChars: int | None = None):
+        # 使用 Readability 提取网页正文
+        # 支持 markdown/text 格式输出
+        # 支持 maxChars 截断
+```
+
+**功能**：
+- 使用 Readability 库提取网页正文
+- 支持 Markdown 和纯文本两种输出格式
+- 自动处理重定向（最多 5 次）
+- 支持输出截断（默认 50000 字符）
+- 自动处理 JSON/HTML/Raw 等多种内容类型
+
+**安全机制**：
+- URL 验证：仅允许 http/https 协议
+- 限制重定向次数防止 DoS 攻击
+- 使用固定 User-Agent 模拟浏览器
+
+---
+
+### 3.4 消息工具 (message.py)
+
+#### MessageTool - 发送消息
+
+```python
+class MessageTool(Tool):
+    """Tool to send messages to users on chat channels."""
+
+    async def execute(
+        self,
+        content: str,
+        channel: str | None = None,
+        chat_id: str | None = None,
+        message_id: str | None = None,
+        media: list[str] | None = None,
+    ) -> str:
+        # 通过 MessageBus 发送消息到指定渠道
+```
+
+**功能**：
+- 向用户发送消息到聊天渠道
+- 支持指定目标 channel 和 chat_id
+- 支持发送附件（图片、音频、文档）
+- 支持回复特定消息（通过 message_id）
+
+**参数**：
+| 参数 | 类型 | 说明 |
 |------|------|------|
-| `web_search` | web.py | Brave Search 网页搜索 |
-| `web_fetch` | web.py | 网页内容抓取 |
-| `message` | message.py | 发送消息到聊天渠道 |
-| `spawn` | spawn.py | 启动子 Agent |
-| `cron` | cron.py | 定时任务管理 |
+| content | string | 消息内容（必需） |
+| channel | string | 目标渠道（可选，默认当前渠道） |
+| chat_id | string | 目标用户 ID（可选，默认当前用户） |
+| media | array | 附件路径列表（可选） |
+
+**使用场景**：
+- 在 Tool 中主动通知用户
+- 跨渠道发送消息
+- 发送文件/图片给用户
+
+---
+
+### 3.5 子 Agent 工具 (spawn.py)
+
+#### SpawnTool - 启动子 Agent
+
+```python
+class SpawnTool(Tool):
+    """Tool to spawn a subagent for background task execution."""
+
+    async def execute(self, task: str, label: str | None = None, **kwargs) -> str:
+        return await self._manager.spawn(
+            task=task,
+            label=label,
+            origin_channel=self._origin_channel,
+            origin_chat_id=self._origin_chat_id,
+            session_key=self._session_key,
+        )
+```
+
+**功能**：
+- 在后台启动子 Agent 执行任务
+- 子 Agent 独立运行，不阻塞主对话
+- 任务完成后通过消息通知用户
+
+**参数**：
+| 参数 | 类型 | 说明 |
+|------|------|------|
+| task | string | 子 Agent 需要完成的任务描述（必需） |
+| label | string | 任务标签，便于识别（可选） |
+
+**使用场景**：
+- 耗时的搜索任务
+- 批量文件处理
+- 并行执行多个独立任务
+- 不阻塞主对话的后台任务
+
+**与主 Agent 的区别**：
+- 独立的消息循环和工具调用
+- 有独立的执行状态跟踪
+- 可通过 `/stop` 命令取消
+
+---
+
+### 3.6 定时任务工具 (cron.py)
+
+#### CronTool - 定时任务管理
+
+```python
+class CronTool(Tool):
+    """Tool to schedule reminders and recurring tasks."""
+
+    async def execute(
+        self,
+        action: str,
+        message: str = "",
+        every_seconds: int | None = None,
+        cron_expr: str | None = None,
+        tz: str | None = None,
+        at: str | None = None,
+        job_id: str | None = None,
+    ) -> str:
+        # 支持三种定时方式：every_seconds、cron_expr、at
+```
+
+**功能**：
+- 定时提醒任务
+- 周期性执行任务
+- 一次性定时任务
+
+**参数**：
+| 参数 | 类型 | 说明 |
+|------|------|------|
+| action | string | 操作：add/list/remove（必需） |
+| message | string | 提醒消息（add 时必需） |
+| every_seconds | integer | 间隔秒数（周期性任务） |
+| cron_expr | string | Cron 表达式（如 "0 9 * * *"） |
+| tz | string | 时区（如 "America/Vancouver"） |
+| at | string | 一次性执行时间（ISO 格式） |
+| job_id | string | 任务 ID（remove 时必需） |
+
+**定时方式**：
+
+1. **every_seconds**：间隔执行
+   ```
+   每 300 秒执行一次
+   every_seconds: 300
+   ```
+
+2. **cron_expr**：Cron 表达式
+   ```
+   每天早上 9 点执行
+   cron_expr: "0 9 * * *"
+   tz: "Asia/Shanghai"
+   ```
+
+3. **at**：一次性执行
+   ```
+   2026 年 2 月 12 日 10:30 执行
+   at: "2026-02-12T10:30:00"
+   ```
+
+**操作示例**：
+```
+# 添加定时任务
+cron(action="add", message="喝水提醒", every_seconds=3600)
+
+# 列出所有任务
+cron(action="list")
+
+# 删除任务
+cron(action="remove", job_id="job_xxx")
+```
+
+**安全机制**：
+- 禁止在 cron job 内部创建新的 cron job
+- 需要有效的 session context（channel/chat_id）
+
+---
+
+### 3.7 MCP 工具 (mcp.py)
+
+#### MCP 集成概述
+
+MCP (Model Context Protocol) 是 Anthropic 推出的模型上下文协议，允许 AI 助手连接外部工具服务器。nanobot 通过 `MCPToolWrapper` 将 MCP 工具转换为原生工具。
+
+**MCP 加载流程**：
+
+```mermaid
+flowchart TD
+    A[AgentLoop 初始化] --> B{有 MCP 配置?}
+    B -->|否| C[跳过 MCP]
+    B -->|是| D[懒加载: 首次消息处理]
+
+    D --> E[创建 AsyncExitStack]
+    E --> F[遍历 mcpServers 配置]
+
+    F --> G{每台服务器}
+    G --> H{command 存在?}
+    H -->|是| I[Stdio 模式]
+    H -->|否| J{url 存在?}
+    J -->|是| K[HTTP 模式]
+    J -->|否| L[跳过]
+
+    I --> M[创建 StdioServerParameters]
+    K --> N[创建 httpx.AsyncClient]
+    K --> O[创建 streamable_http_client]
+
+    M --> P[创建 stdio_client]
+    O --> P
+
+    P --> Q[创建 ClientSession]
+    Q --> R[await session.initialize]
+
+    R --> S[获取工具列表: session.list_tools]
+    S --> T[遍历每个工具]
+
+    T --> U[创建 MCPToolWrapper]
+    U --> V[registry.register wrapper]
+    V --> W{还有更多工具?}
+
+    W -->|是| T
+    W -->|否| X{还有更多服务器?}
+
+    X -->|是| G
+    X -->|否| Y[MCP 连接完成]
+
+    L --> X
+    C --> Z[继续启动]
+    Y --> Z
+```
+
+**流程说明**：
+
+1. **懒加载**：MCP 服务器在首次消息处理时才连接（不是启动时）
+2. **配置解析**：遍历 `config.json` 中的 `tools.mcpServers`
+3. **连接方式**：
+   - `command` + `args` → Stdio 模式（本地进程）
+   - `url` → HTTP 模式（SSE）
+4. **工具注册**：每个 MCP 工具封装为 `MCPToolWrapper` 注册到 `ToolRegistry`
+5. **命名转换**：`mcp_{server_name}_{original_name}` 避免冲突
+
+```python
+class MCPToolWrapper(Tool):
+    """Wraps a single MCP server tool as a nanobot Tool."""
+
+    def __init__(self, session, server_name: str, tool_def, tool_timeout: int = 30):
+        self._name = f"mcp_{server_name}_{tool_def.name}"
+        self._description = tool_def.description
+        self._parameters = tool_def.inputSchema
+```
+
+**MCP 连接方式**：
+
+1. **Stdio 模式**（本地进程）
+   ```json
+   {
+     "tools": {
+       "mcpServers": {
+         "filesystem": {
+           "command": "npx",
+           "args": ["-y", "@modelcontextprotocol/server-filesystem", "/path/to/dir"]
+         }
+       }
+     }
+   }
+   ```
+
+2. **HTTP 模式**（远程服务器）
+   ```json
+   {
+     "tools": {
+       "mcpServers": {
+         "my-remote": {
+           "url": "https://example.com/mcp/",
+           "headers": {
+             "Authorization": "Bearer xxxxx"
+           }
+         }
+       }
+     }
+   }
+   ```
+
+**工具命名**：
+- MCP 工具名称格式：`mcp_{server_name}_{original_name}`
+- 例如：`mcp_filesystem_read_file`
+
+**超时配置**：
+```json
+{
+  "tools": {
+    "mcpServers": {
+      "my-server": {
+        "url": "https://example.com/mcp/",
+        "toolTimeout": 120
+      }
+    }
+  }
+}
+```
+
+**功能特点**：
+- 自动发现和注册 MCP 服务器工具
+- 支持自定义超时配置
+- 支持 HTTP/Stdio 两种传输方式
+- 支持自定义请求头（用于认证）
 
 ---
 
@@ -388,6 +725,57 @@ def _register_default_tools(self) -> None:
 5. **Tool 和 MCP 的区别？**
    - Tool：内置功能，直接执行
    - MCP：外部服务代理，通过协议调用远程工具
+
+6. **内置工具的命名空间冲突如何处理？**
+   - MCP 工具名称格式：`mcp_{server_name}_{original_name}`
+   - 例如：`mcp_filesystem_read_file`
+   - 通过前缀避免与内置工具冲突
+
+7. **WebFetch 如何提取网页正文？**
+   - 使用 Mozilla 的 Readability 库
+   - 自动提取标题、正文、作者等信息
+   - 支持转换为 Markdown 或纯文本
+   - 处理 JSON/HTML/Raw 等多种内容类型
+
+8. **定时任务的三种触发方式？**
+   - **every_seconds**：固定间隔（如每 3600 秒）
+   - **cron_expr**：标准 Cron 表达式（如 `0 9 * * *`）
+   - **at**：ISO 格式时间戳（如 `2026-02-12T10:30:00`）
+
+9. **SpawnTool 子 Agent 与主 Agent 的区别？**
+   - 独立的消息循环和工具调用
+   - 不阻塞主对话流程
+   - 可通过 `/stop` 命令取消
+   - 适用于耗时任务和并行处理
+
+10. **MCP 支持哪两种传输模式？**
+    - **Stdio**：通过标准输入输出与本地进程通信（适用于本地工具）
+    - **HTTP**：通过 HTTP SSE 与远程服务器通信（适用于远程服务）
+
+11. **工具执行结果如何截断？**
+    - Shell 工具：最大 10000 字符
+    - WebFetch：可通过 maxChars 参数控制（默认 50000）
+    - 防止超长输出导致 LLM context 溢出
+
+12. **为什么禁止在 Cron Job 中创建新的 Cron Job？**
+    - 防止无限循环创建任务
+    - 导致资源耗尽和服务崩溃
+    - 通过 `_in_cron_context` 标记检测
+
+13. **MessageTool 如何实现跨渠道发送？**
+    - 支持指定 target channel 和 chat_id
+    - 通过 MessageBus 的 publish_outbound 发送
+    - 支持附件（图片、音频、文档）
+
+14. **MCP 工具的超时如何配置？**
+    - 默认 30 秒超时
+    - 可通过 `toolTimeout` 配置覆盖
+    - HTTP 模式使用无超时 httpx 客户端配合工具级超时
+
+15. **工具参数验证支持哪些类型？**
+    - 基本类型：string、integer、number、boolean
+    - 复合类型：array、object
+    - 约束：enum、minimum、maximum、minLength、maxLength、required
 
 ---
 

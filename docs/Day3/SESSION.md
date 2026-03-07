@@ -1,6 +1,6 @@
 # Session System 深入解析
 
-> 本文档是 [LEARNING_PLAN.md](./LEARNING_PLAN.md) Day 3 的补充材料
+> 本文档是 [LEARNING_PLAN.md](../../LEARNING_PLAN.md) Day 3 的补充材料
 
 ## 概述
 
@@ -356,6 +356,79 @@ def list_sessions(self) -> list[dict[str, Any]]:
    - `get_or_create()` 时加载到缓存
    - `save()` 时更新缓存
    - `invalidate()` 手动失效
+
+6. **会话 key 的格式是什么？如何实现多平台隔离？**
+   - 格式：`channel:chat_id`（如 `telegram:123456789`）
+   - 每个 Channel + 用户 ID 组合对应一个独立会话
+   - 多平台隔离：Telegram 和 Discord 用户相同 ID 不会混淆
+   - 适合场景：单用户在多平台的会话管理
+
+7. **会话文件的命名规则？**
+   - 文件名：`{channel}_{chat_id}.jsonl`（如 `telegram_123456789.jsonl`）
+   - 特殊：`cli_direct.jsonl`（命令行直接会话）
+   - 路径：`workspace/sessions/` 目录
+
+8. **会话的持久化时机？**
+   - 每轮对话结束后自动保存（在 `AgentLoop._save_turn()` 中调用）
+   - 不是实时写入，而是批量写入
+   - 优势：减少 I/O 次数，提升性能
+   - 风险：程序异常退出可能丢失少量消息
+
+9. **会话加载时的自动迁移机制？**
+   - 自动检查旧路径 `~/.nanobot/sessions/` 是否存在
+   - 如果存在，自动移动到新路径 `workspace/sessions/`
+   - 兼容旧版本升级，无需手动迁移
+   - 迁移是一次性的，之后直接读取新路径
+
+10. **为什么 save() 时每次都重写整个文件？**
+    - 实现简单，无需维护文件指针
+    - JSONL 追加写入虽然高效，但读取时需要扫描整个文件
+    - 权衡：写入次数少（每轮一次），读取次数多（每次加载）
+    - 适合场景：个人 AI 助手，请求频率不高
+
+11. **会话缓存会无限增长吗？**
+    - 会话缓存是懒加载的，只有被访问过的会话才会进入缓存
+    - 没有显式的缓存淘汰机制
+    - 生产环境建议：定期重启或手动调用 `invalidate()` 清理
+    - 内存占用：每个会话约几 KB~几 MB，取决于对话长度
+
+12. **如何处理超长会话的性能问题？**
+    - `get_history(max_messages=500)` 限制返回消息数
+    - 超过限制时只返回最近的 500 条
+    - 配合记忆整合（consolidate）定期压缩历史
+    - LLM 调用成本与消息数成正比，需权衡
+
+13. **会话消息包含哪些字段？**
+    - `role`：user/assistant/tool
+    - `content`：消息内容（文本）
+    - `timestamp`：ISO 格式时间戳
+    - `tool_calls`：工具调用列表（仅 assistant）
+    - `tool_call_id`：工具调用 ID（仅 tool）
+    - `name`：工具名称（仅 tool）
+
+14. **为什么工具结果需要对齐到用户回合？**
+    - 示例：用户发送消息 → LLM 调用工具 → 工具返回结果
+    - 如果只保留最后几条，可能丢失 tool_call，只保留 tool_result
+    - LLM 看不到 tool_call 会导致上下文不完整
+    - 对齐逻辑：找到最近的用户消息作为起点，返回该消息之后的所有内容
+
+15. **多用户并发场景下的会话管理？**
+    - SessionManager 使用内存字典 `_cache` 存储会话
+    - 无锁设计，依赖 Python GIL
+    - 每个 Channel 消息通过 `session_key` 路由到对应会话
+    - 不同用户的消息在 AgentLoop 中通过 `_processing_lock` 串行处理
+    - 适合场景：多用户并发访问，但单用户内串行
+
+16. **会话清理机制？**
+    - 目前没有自动清理机制
+    - `/new` 命令只清空当前会话的内存消息，不删除文件
+    - 需要手动删除 `sessions/*.jsonl` 文件
+    - 建议：定期归档或删除不活跃的会话文件
+
+17. **会话的 created_at 和 updated_at 用途？**
+    - `created_at`：会话创建时间，用于排序和展示
+    - `updated_at`：最后更新时间，每次保存时更新
+    - `list_sessions()` 按 `updated_at` 倒序排列
 
 ---
 

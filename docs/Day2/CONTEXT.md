@@ -1,6 +1,6 @@
 # Context Builder 深入解析
 
-> 本文档是 [LEARNING_PLAN.md](./LEARNING_PLAN.md) Day 2 的补充材料
+> 本文档是 [LEARNING_PLAN.md](../../LEARNING_PLAN.md) Day 2 的补充材料
 
 ## 概述
 
@@ -126,7 +126,140 @@ Skills with available="false" need dependencies installed first - you can try in
 │    - 告诉 Agent 如何使用技能                        │
 └─────────────────────────────────────────────────────┘
 ```
+**System Prompt 示例**：
+```
+================================================================================
+SYSTEM PROMPT STRUCTURE
+================================================================================
+# nanobot 🐈
 
+You are nanobot, a helpful AI assistant.
+
+## Runtime
+Windows AMD64, Python 3.12.9
+
+## Workspace
+Your workspace is at: C:\Users\user\AppData\Local\Temp\pytest-of-user\pytest-15\test_print_system_prompt0\workspace
+- Long-term memory: C:\Users\user\AppData\Local\Temp\pytest-of-user\pytest-15\test_print_system_prompt0\workspace/memory/MEMORY.md (write important facts here)
+- History log: C:\Users\user\AppData\Local\Temp\pytest-of-user\pytest-15\test_print_system_prompt0\workspace/memory/HISTORY.md (grep-searchable). Each entry starts with [YYYY-MM-DD HH:MM].
+- Custom skills: C:\Users\user\AppData\Local\Temp\pytest-of-user\pytest-15\test_print_system_prompt0\workspace/skills/{skill-name}/SKILL.md
+
+## nanobot Guidelines
+- State intent before tool calls, but NEVER predict or claim results before receiving them.
+- Before modifying a file, read it first. Do not assume files or directories exist.
+- After writing or editing a file, re-read it if accuracy matters.
+- If a tool call fails, analyze the error before retrying with a different approach.
+- Ask for clarification when the request is ambiguous.
+
+Reply directly with text for conversations. Only use the 'message' tool to send to a specific chat channel.
+
+---
+
+## AGENTS.md
+
+Default agent configuration.
+
+## USER.md
+
+User: Test User
+
+## IDENTITY.md
+
+I am a helpful coding assistant.
+
+---
+
+# Memory
+
+## Long-term Memory
+- User prefers Python over JavaScript
+
+---
+
+# Active Skills
+
+### Skill: memory
+
+# Memory
+
+## Structure
+
+- `memory/MEMORY.md` — Long-term facts (preferences, project context, relationships). Always loaded into your context.
+- `memory/HISTORY.md` — Append-only event log. NOT loaded into context. Search it with grep. Each entry starts with [YYYY-MM-DD HH:MM].
+
+## Search Past Events
+
+
+grep -i "keyword" memory/HISTORY.md
+
+
+Use the `exec` tool to run grep. Combine patterns: `grep -iE "meeting|deadline" memory/HISTORY.md`
+
+## When to Update MEMORY.md
+
+Write important facts immediately using `edit_file` or `write_file`:
+- User preferences ("I prefer dark mode")
+- Project context ("The API uses OAuth2")
+- Relationships ("Alice is the project lead")
+
+## Auto-consolidation
+
+Old conversations are automatically summarized and appended to HISTORY.md when the session grows large. Long-term facts are extracted to MEMORY.md. You don't need to manage this.
+
+---
+
+# Skills
+
+The following skills extend your capabilities. To use a skill, read its SKILL.md file using the read_file tool.
+Skills with available="false" need dependencies installed first - you can try installing them with apt/brew.
+
+<skills>
+  <skill available="true">
+    <name>clawhub</name>
+    <description>Search and install agent skills from ClawHub, the public skill registry.</description>
+    <location>D:\Github\nanobot\nanobot\skills\clawhub\SKILL.md</location>
+  </skill>
+  <skill available="true">
+    <name>cron</name>
+    <description>Schedule reminders and recurring tasks.</description>
+    <location>D:\Github\nanobot\nanobot\skills\cron\SKILL.md</location>
+  </skill>
+  <skill available="false">
+    <name>github</name>
+    <description>Interact with GitHub using the `gh` CLI. Use `gh issue`, `gh pr`, `gh run`, and `gh api` for issues, PRs, CI runs, and advanced queries.</description>
+    <location>D:\Github\nanobot\nanobot\skills\github\SKILL.md</location>
+    <requires>CLI: gh</requires>
+  </skill>
+  <skill available="true">
+    <name>memory</name>
+    <description>Two-layer memory system with grep-based recall.</description>
+    <location>D:\Github\nanobot\nanobot\skills\memory\SKILL.md</location>
+  </skill>
+  <skill available="true">
+    <name>skill-creator</name>
+    <description>Create or update AgentSkills. Use when designing, structuring, or packaging skills with scripts, references, and assets.</description>
+    <location>D:\Github\nanobot\nanobot\skills\skill-creator\SKILL.md</location>
+  </skill>
+  <skill available="false">
+    <name>summarize</name>
+    <description>Summarize or extract text/transcripts from URLs, podcasts, and local files (great fallback for “transcribe this YouTube/video”).</description>
+    <location>D:\Github\nanobot\nanobot\skills\summarize\SKILL.md</location>
+    <requires>CLI: summarize</requires>
+  </skill>
+  <skill available="false">
+    <name>tmux</name>
+    <description>Remote-control tmux sessions for interactive CLIs by sending keystrokes and scraping pane output.</description>
+    <location>D:\Github\nanobot\nanobot\skills\tmux\SKILL.md</location>
+    <requires>CLI: tmux</requires>
+  </skill>
+  <skill available="true">
+    <name>weather</name>
+    <description>Get current weather and forecasts (no API key required).</description>
+    <location>D:\Github\nanobot\nanobot\skills\weather\SKILL.md</location>
+  </skill>
+</skills>
+================================================================================
+```
 ---
 
 ### 2. `_get_identity()` - 身份信息
@@ -419,17 +552,80 @@ def add_assistant_message(
    - 用户自定义 agent 行为
    - 按优先级顺序加载
 
-3. **Memory 和 Skills 的区别？**
-   - Memory：长期记忆事实（自动累积：按需加载的能力）
-   - Skills扩展
+3. **Bootstrap 文件的加载顺序？**
+   - `AGENTS.md`: 给LLM的README文档
+   - `SOUL.md`: Agent性格定义
+   - `USER.md`: 用户信息
+   - `TOOLS.md`: 工具定义
+   - `IDENTITY.md`: 身份定义
 
 4. **多模态如何处理？**
    - base64 编码图片
    - 转换为 `image_url` 格式
 
-5. **为什么 System Prompt 分多个部分？**
-   - 模块化，便于维护
-   - 条件加载（memory、skills 可选）
+5. **System Prompt 加载过程**
+    ```
+        build_system_prompt()        # 构建系统Prompt
+            │
+            ├─► _get_identity()              # 获取身份信息
+            ├─► _load_bootstrap_files()       # 加载引导文件
+            ├─► memory.get_memory_context()   # 获取记忆上下文
+            ├─► skills.get_always_skills()    # 获取常驻技能
+            ├─► skills.load_skills_for_context()  # 加载技能内容
+            └─► skills.build_skills_summary() # 构建技能摘要
+    ```
+
+6. **Prompt 缓存与性能优化**
+   - **问题**：何时缓存 System Prompt？缓存失效的条件？
+   - **答案**：nanobot v0.1.4.post2+ 优化了 Prompt 缓存。System Prompt 构建成本较高（需读取多个文件、加载技能等），因此相同 skill_names 的请求会复用缓存。失效条件：workspace 文件变更、skill 配置变更。缓存 key 基于 skill_names 生成，确保不同技能组合使用不同缓存。
+
+7. **Context 长度与 Token 成本控制**
+   - **问题**：如何控制 Context 长度？记忆窗口如何工作？
+   - **答案**：Context 过长会导致 Token 费用增加、响应延迟增大、模型可能截断上下文。`memory_window` 配置控制历史消息数量（默认100条）。超长会话自动触发记忆摘要：提取关键事实到 MEMORY.md，压缩 HISTORY.md。实际项目中需根据模型上下文窗口（如32K、128K）和成本预算调整此参数。
+
+8. **Bootstrap 文件的动态更新**
+   - **问题**：修改 AGENTS.md 后何时生效？
+   - **答案**：修改 Bootstrap 文件后，下一次请求自动生效，无需重启服务。ContextBuilder 在每次请求时重新读取文件，因此文件系统变更会被自动感知。生产环境中可利用此特性实现 Agent 行为的动态调整。
+
+9. **记忆系统的设计考量**
+   - **问题**：MEMORY.md vs HISTORY.md 的区别？何时写入长期记忆？
+   - **答案**：
+     - **MEMORY.md**：长期记忆，存储重要事实（用户偏好、项目上下文、人物关系），每次请求都会加载到 System Prompt
+     - **HISTORY.md**：对话历史，按时间戳 `[YYYY-MM-DD HH:MM]` 记录，可 grep 搜索，但不自动加载到上下文
+     - 写入时机：重要事实立即写入 MEMORY.md（如"用户偏好深色模式"），HISTORY.md 在会话增长过大时自动摘要
+     - 设计理念：让 LLM 决定何时保存重要信息，而不是预设规则
+
+10. **多模态处理的限制与最佳实践**
+    - **问题**：图片大小有限制吗？视频/音频如何处理？
+    - **答案**：
+      - 支持格式：JPEG、PNG、GIF、WebP 等常见图片格式，通过 `mimetypes.guess_type()` 检测
+      - 编码方式：base64 直接嵌入，避免额外网络请求
+      - 限制因素：不同模型对图像尺寸/格式支持不同（如 GPT-4V vs Claude 3），建议预处理为模型友好的尺寸
+      - 视频/音频：当前版本仅支持图片，文档未涉及视频/音频处理，需自行扩展
+
+11. **安全与隔离考量**
+    - **问题**：Runtime Context 中的 chat_id 用途？敏感信息如何处理？
+    - **答案**：
+      - chat_id 用于标识会话来源，支持多用户场景下的上下文隔离
+      - workspace 路径暴露给 LLM，需确保沙箱隔离（`tools.restrictToWorkspace` 配置）
+      - 敏感操作：文件路径、工作区路径不应包含敏感信息，建议使用虚拟路径或符号链接
+      - Prompt 注入防护：Bootstrap 文件内容由用户控制，风险自担，建议生产环境限制文件编辑权限
+
+12. **与 Agent Loop 的协作机制**
+    - **问题**：ContextBuilder 在 Agent Loop 中的生命周期？
+    - **答案**：
+      - ContextBuilder 在每次 Agent Loop 迭代时被调用，构建当前轮的完整消息列表
+      - 工具执行结果通过 `add_tool_result()` 追加到 messages，包含 tool_call_id、tool_name、result
+      - LLM 回复通过 `add_assistant_message()` 追加，可能包含 content、tool_calls、reasoning_content
+      - 消息列表在多轮迭代中不断累积，直到触发 memory_window 限制或记忆摘要
+
+13. **生产环境问题排查**
+    - **问题**：如何调试 Prompt 构建问题？
+    - **答案**：
+      - 使用 `nanobot agent --logs` 参数查看完整的 Prompt 构建过程和 API 调用
+      - LLM 返回格式错误：检查 tool_calls 字段是否规范，确保 tool name 与注册名称匹配
+      - Context 构建失败：检查 workspace 文件权限、编码问题（确保 UTF-8）
+      - Token 溢出：减小 memory_window 或手动清理 HISTORY.md，或升级到更大上下文窗口的模型
 
 ---
 

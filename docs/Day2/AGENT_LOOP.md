@@ -1,6 +1,6 @@
 # Agent Loop 深入解析
 
-> 本文档是 [LEARNING_PLAN.md](./LEARNING_PLAN.md) Day 2 的补充材料
+> 本文档是 [LEARNING_PLAN.md](../../LEARNING_PLAN.md) Day 2 的补充材料
 
 ## 概述
 
@@ -565,8 +565,95 @@ def _register_default_tools(self) -> None:
         7. 返回响应
         └─► OutboundMessage
         ```
-  6. `_active_tasks()`增加任务
-  7. `add_done_callback()`处理完成好的任务
+    - `_active_tasks()`增加任务
+    - `add_done_callback()`处理完成好的任务
+
+7. **Agent Loop 与 ReAct 模式**
+   - **问题**：nanobot 的 Agent Loop 遵循什么模式？
+   - **答案**：nanobot 遵循 **ReAct (Reasoning + Acting)** 模式。LLM 首先进行推理（reasoning），决定是否需要调用工具，然后执行工具（acting），将结果返回给 LLM 进行下一轮推理。这种模式的特点是：LLM 可以自主决定调用哪些工具、调用顺序，以及何时结束循环。与单纯的 CoT（Chain of Thought）相比，ReAct 能够与外部世界交互，实现更复杂的任务。
+
+8. **工具调用的错误处理与重试机制**
+   - **问题**：工具执行失败时如何处理？
+   - **答案**：
+     - 工具执行异常会被捕获并转换为错误消息
+     - 错误信息格式化为字符串，返回给 LLM：`f"Error: {type(e).__name__}: {e}"`
+     - LLM 可以根据错误信息决定是否重试或换用其他工具
+     - 没有内置自动重试机制，依赖 LLM 的推理能力处理失败
+     - 关键设计：即使工具失败，也要将错误信息返回给 LLM，让其自行决策
+
+9. **流式输出（Streaming）如何实现**
+   - **问题**：nanobot 如何实现实时流式响应？
+   - **答案**：
+     - 通过 `on_progress` 回调函数实现流式输出
+     - LLM 响应以 chunk 为单位通过回调传递
+     - Channel 层负责将 chunk 实时推送给用户（如 Telegram 的 `answer_callback_query`）
+     - 配置项 `channels.send_progress` 控制是否启用流式输出
+     - v0.1.4+ 增强了 progress streaming 的稳定性
+
+10. **会话隔离与并发处理**
+    - **问题**：如何保证多用户并发时的会话隔离？
+    - **答案**：
+      - 使用 `session_key`（格式：`channel:chat_id`）标识唯一会话
+      - 每个会话有独立的 `session.get_history()` 历史记录
+      - 全局锁 `_processing_lock` 防止同一会话内的并发竞态
+      - 不同会话可以并行处理（跨会话不互斥）
+      - 这种设计在保证数据一致性的同时，最大化并发吞吐量
+
+11. **子 Agent（Subagent）如何工作**
+    - **问题**：SpawnTool 如何实现后台任务？
+    - **答案**：
+      - SpawnTool 调用 `agent.spawn()` 创建新的异步任务
+      - 子 Agent 独立运行，有独立的循环和工具调用
+      - 通过 `_session_tasks` 映射追踪子 Agent 任务
+      - 主 Agent 可以通过 `/stop` 命令取消子 Agent
+      - 子 Agent 结果通过消息队列返回给主 Agent
+      - 适用场景：耗时任务（如代码搜索、批量处理）不阻塞主对话
+
+12. **工具调用的超时处理**
+    - **问题**：工具执行超时如何处理？
+    - **答案**：
+      - 每个工具可配置独立超时时间（`toolTimeout`）
+      - MCP 工具默认 30 秒超时，可通过配置覆盖
+      - Shell 工具通过 `ExecToolConfig.exec_timeout` 配置
+      - 超时后抛出 `asyncio.TimeoutError`，被捕获并返回错误信息
+      - LLM 收到超时错误后可决定是否重试或换用其他方法
+
+13. **消息队列（MessageBus）的作用**
+    - **问题**：为什么需要 MessageBus？直接调用不行吗？
+    - **答案**：
+      - MessageBus 解耦了消息生产者和消费者
+      - Channel 负责接收消息并入队，AgentLoop 负责消费
+      - 优点：
+        - 削峰填谷：突发消息不会直接压垮 Agent
+        - 异步处理：Channel 接收消息不等待处理完成
+        - 灵活路由：支持多 Channel、多 Agent 的复杂拓扑
+      - nanobot 使用 `asyncio.Queue` 实现，简单高效
+
+14. **限流与防刷机制**
+    - **问题**：如何防止用户恶意刷消息？
+    - **答案**：
+      - 目前主要依赖 Channel 层面的限流配置
+      - 例如 Telegram 可通过 `poll_interval` 控制拉取频率
+      - WhatsApp 有消息去重机制（v0.1.4.post2+）
+      - Slack 支持线程隔离，避免重复处理
+      - 生产环境建议在 Channel 层面（如 Nginx/Telegram API 限流）增加防护
+
+15. **消息去重（WhatsApp Dedup）**
+    - **问题**：WhatsApp 消息如何去重？
+    - **答案**：
+      - nanobot v0.1.4.post2+ 实现 WhatsApp 消息去重
+      - 维护已处理消息的 ID 集合
+      - 重复消息直接丢弃，不触发 Agent 处理
+      - 防止 Webhook 重试导致的消息重复
+
+16. **Agent Loop 的可观测性**
+    - **问题**：如何监控 Agent Loop 的运行状态？
+    - **答案**：
+      - 使用 `nanobot agent --logs` 查看运行时日志
+      - 日志包含：Prompt 构建、LLM 调用、工具执行、结果返回
+      - Session 持久化到 `~/.nanobot/workspace/sessions/`
+      - 可通过日志分析：响应时间、工具调用频率、错误率等指标
+
 ---
 
 ## 文件位置
