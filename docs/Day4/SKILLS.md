@@ -1,6 +1,6 @@
 # Skills System 深入解析
 
-> 本文档是 [LEARNING_PLAN.md](./LEARNING_PLAN.md) Day 4 的补充材料
+> 本文档是 [LEARNING_PLAN.md](../../LEARNING_PLAN.md) Day 4 的补充材料
 
 ## 概述
 
@@ -320,6 +320,74 @@ SkillsLoader.load_skills_for_context(always_skills)
 5. **always: true 的作用？**
    - 常驻加载到 System Prompt
    - 适合基础能力（如 memory）
+
+6. **Skill 文件的格式是什么？为什么用 YAML frontmatter？**
+   - Markdown 文件 + YAML frontmatter
+   - frontmatter 存储元数据（name、description、always、requires）
+   - 主体是技能的使用说明（Markdown 格式）
+   - 好处：元数据与内容分离，便于程序解析
+
+7. **技能优先级如何处理？**
+   - workspace/skills/ 优先于 nanobot/skills/
+   - 同名技能：用户自定义覆盖内置
+   - 代码逻辑：`list_skills()` 先遍历 workspace，再遍历 builtin，避免重复
+
+8. **如何检查技能依赖？**
+   - `requires.bins`：检查 CLI 工具是否存在（通过 `shutil.which()`）
+   - `requires.env`：检查环境变量是否设置（通过 `os.environ.get()`）
+   - 依赖不满足时：技能标记为 `available="false"`，不加载到 context
+
+9. **为什么用 XML 格式输出技能摘要？**
+   - 结构化数据，便于 LLM 解析
+   - 明确标记可用/不可用状态
+   - 包含位置信息，Agent 可自行读取
+   - 格式示例：`<skill available="true"><name>memory</name>...</skill>`
+
+10. **Skill 会被缓存吗？**
+    - 不会缓存，每次请求重新读取文件
+    - 因为 Skill 内容可能随时更新
+    - 适合场景：个人 AI 助手，请求频率不高
+
+11. **用户如何自定义 Skill？**
+    - 在 `workspace/skills/{skill_name}/SKILL.md` 创建目录和文件
+    - 格式：YAML frontmatter + Markdown 说明
+    - 示例：`workspace/skills/my_custom_skill/SKILL.md`
+
+12. **内置技能有哪些？**
+    - memory：两层记忆系统（always: true）
+    - cron：定时任务管理
+    - weather：天气查询
+    - clawhub：ClawHub 技能市场
+    - skill-creator：技能创建工具
+    - github：GitHub CLI 操作（需要 gh）
+    - tmux：Tmux 会话管理（需要 tmux）
+    - summarize：文本/音视频摘要（需要 summarize CLI）
+
+13. **Skill 如何与 Agent Loop 交互？**
+    - ContextBuilder 构建 System Prompt 时调用 SkillsLoader
+    - build_skills_summary()：生成所有技能摘要
+    - get_always_skills()：获取常驻技能
+    - load_skills_for_context()：加载指定技能内容
+    - Agent 收到用户请求后，可能使用 read_file 工具读取 Skill 文件
+
+14. **为什么 Skill 不是直接执行而是知识文档？**
+    - Skill 是"如何使用"的知识，不是"执行什么"
+    - Agent 理解 Skill 内容后，自主决定如何调用工具
+    - 灵活性更高，适应复杂场景
+    - Tool 是"能做什么"，Skill 是"怎么做的"
+
+15. **Skill 的典型内容结构？**
+    - 技能名称(必须)
+    - 功能描述(必须)
+    - 使用方法(必须)
+    - 示例
+    - 注意事项
+    - Agent 通过阅读这些内容理解如何完成特定任务
+
+16. **ClawHub 是什么？**
+    - 公共技能市场
+    - nanobot 内置的 skill：可搜索和安装社区共享的技能
+    - 扩展 nanobot 能力的方式之一
 
 ---
 

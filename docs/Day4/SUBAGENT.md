@@ -1,6 +1,6 @@
 # Subagent System 深入解析
 
-> 本文档是 [LEARNING_PLAN.md](./LEARNING_PLAN.md) Day 4 的补充材料
+> 本文档是 [LEARNING_PLAN.md](../../LEARNING_PLAN.md) Day 4 的补充材料
 
 ## 概述
 
@@ -327,6 +327,65 @@ async def cancel_by_session(self, session_key: str) -> int:
    - 按 session_key 追踪
    - asyncio.Task.cancel()
    - 批量取消
+
+6. **子 Agent 的迭代次数限制是多少？为什么这样设置？**
+   - 最多 15 次迭代
+   - 防止子 Agent 失控（无限循环调用工具）
+   - 主 Agent 是 40 次，子 Agent 任务相对简单，15 次足够
+
+7. **子 Agent 与主 Agent 的参数差异？**
+   - **temperature**：主 Agent 0.1（确定性），子 Agent 0.7（创造性）
+   - **max_tokens**：主 Agent 8192，子 Agent 4096
+   - **工具数量**：主 Agent 全部，子 Agent 仅基础工具
+
+8. **子 Agent 如何构建自己的 System Prompt？**
+   - 复用 ContextBuilder 的 `_build_runtime_context()` 获取时间信息
+   - 添加子 Agent 角色定义（"You are a subagent..."）
+   - 添加 workspace 路径
+   - 添加可用技能摘要（通过 SkillsLoader）
+
+9. **子 Agent 执行失败如何处理？**
+   - `_announce_result()` 接收 status 参数
+   - 失败时 status = "failed"
+   - 结果仍回传给主 Agent，由主 Agent 决定如何告知用户
+   - 不会直接抛出异常中断主流程
+
+10. **为什么子 Agent 通过 MessageBus 回传结果而不是直接回复？**
+    - 保持消息流程一致性（统一通过消息队列）
+    - 让主 Agent 有机会整合和总结结果
+    - 避免消息顺序混乱
+    - 隐藏实现细节，用户感知不到"子 Agent"概念
+
+11. **子 Agent 的 task_id 如何生成？**
+    - 使用 `uuid.uuid4()` 生成完整 UUID
+    - 取前 8 位作为短 ID
+    - 格式：`str(uuid.uuid4())[:8]`
+
+12. **子 Agent 如何追踪任务状态？**
+    - `_running_tasks: dict[str, asyncio.Task]`：task_id → 任务对象
+    - `_session_tasks: dict[str, set[str]]`：session_key → {task_id, ...}
+    - 任务完成时通过 `add_done_callback` 清理
+
+13. **子 Agent 可以嵌套创建子 Agent 吗？**
+    - 不可以
+    - 子 Agent 的 ToolRegistry 不包含 spawn 工具
+    - 防止无限嵌套导致资源耗尽
+
+14. **子 Agent 与 MCP 工具的关系？**
+    - 子 Agent 目前不加载 MCP 工具
+    - 只使用基础内置工具（read_file、write_file、exec、web_search 等）
+    - 这是设计决策，简化子 Agent 复杂度
+
+15. **子 Agent 适用于哪些场景？**
+    - 耗时的文件搜索/代码搜索
+    - 批量文件处理
+    - 需要并行执行的独立任务
+    - 不适合：简单快速的一次性任务（创建子 Agent 也有开销）
+
+16. **子 Agent 执行超时如何处理？**
+    - 没有内置超时机制
+    - 通过迭代次数限制（15 次）间接控制
+    - 用户可手动取消（/stop 命令）
 
 ---
 

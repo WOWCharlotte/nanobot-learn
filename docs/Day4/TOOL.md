@@ -663,6 +663,124 @@ class MCPToolWrapper(Tool):
 - 支持 HTTP/Stdio 两种传输方式
 - 支持自定义请求头（用于认证）
 
+#### `connect_mcp_servers()` 函数详解
+
+```python
+async def connect_mcp_servers(
+    mcp_servers: dict, registry: ToolRegistry, stack: AsyncExitStack
+) -> None:
+    """Connect to configured MCP servers and register their tools."""
+```
+
+**函数参数**：
+| 参数 | 类型 | 说明 |
+|------|------|------|
+| mcp_servers | dict | MCP 服务器配置（从 config.json 读取） |
+| registry | ToolRegistry | 工具注册表，用于注册 MCP 工具 |
+| stack | AsyncExitStack | 异步上下文管理器，用于管理连接生命周期 |
+
+**完整代码解析**：
+
+```python
+# 1. 遍历所有配置的 MCP 服务器
+for name, cfg in mcp_servers.items():
+    try:
+        # 2. 判断连接模式
+        if cfg.command:
+            # === Stdio 模式（本地进程）===
+            params = StdioServerParameters(
+                command=cfg.command,  # 如 "npx"
+                args=cfg.args,       # 如 ["-y", "@modelcontextprotocol/server-filesystem"]
+                env=cfg.env or None  # 环境变量
+            )
+            # 创建 stdio 客户端并加入生命周期管理
+            read, write = await stack.enter_async_context(stdio_client(params))
+
+        elif cfg.url:
+            # === HTTP 模式（远程服务器）===
+            # 创建自定义 httpx 客户端（无超时，配合工具级超时）
+            http_client = await stack.enter_async_context(
+                httpx.AsyncClient(
+                    headers=cfg.headers or None,   # 自定义请求头（如认证）
+                    follow_redirects=True,        # 自动跟随重定向
+                    timeout=None,                 # 无默认超时，由工具级控制
+                )
+            )
+            # 创建 HTTP 客户端并加入生命周期管理
+            read, write, _ = await stack.enter_async_context(
+                streamable_http_client(cfg.url, http_client=http_client)
+            )
+        else:
+            # 无有效配置，跳过
+            logger.warning("MCP server '{}': no command or url configured, skipping", name)
+            continue
+
+        # 3. 创建 MCP ClientSession
+        session = await stack.enter_async_context(ClientSession(read, write))
+
+        # 4. 初始化会话（协议握手）
+        await session.initialize()
+
+        # 5. 获取服务器上的工具列表
+        tools = await session.list_tools()
+
+        # 6. 遍历每个工具，注册到 ToolRegistry
+        for tool_def in tools.tools:
+            # 创建工具包装器
+            wrapper = MCPToolWrapper(
+                session,                    # MCP 会话引用
+                name,                      # 服务器名称
+                tool_def,                  # 工具定义
+                tool_timeout=cfg.tool_timeout  # 超时配置
+            )
+            # 注册到工具注册表
+            registry.register(wrapper)
+
+        logger.info("MCP server '{}': connected, {} tools registered", name, len(tools.tools))
+
+    except Exception as e:
+        logger.error("MCP server '{}': failed to connect: {}", name, e)
+```
+
+**关键设计点**：
+
+1. **AsyncExitStack 管理生命周期**
+   - 自动清理所有连接资源
+   - 无论成功失败都能正确释放
+
+2. **Stdio vs HTTP 模式**
+   - Stdio：本地进程，通过 stdin/stdout 通信
+   - HTTP：远程服务器，通过 SSE (Server-Sent Events) 通信
+
+3. **HTTP 客户端超时处理**
+   - httpx 默认 5s 超时会抢占工具级超时
+   - 因此显式设置 `timeout=None`，由工具级 `toolTimeout` 控制
+
+4. **异常处理**
+   - 单个服务器失败不影响其他服务器
+   - 失败记录日志，不中断整体流程
+
+**MCPToolWrapper 执行流程**：
+
+```python
+async def execute(self, **kwargs: Any) -> str:
+    # 1. 调用 MCP 工具，设置超时
+    result = await asyncio.wait_for(
+        self._session.call_tool(self._original_name, arguments=kwargs),
+        timeout=self._tool_timeout
+    )
+
+    # 2. 处理返回结果
+    parts = []
+    for block in result.content:
+        if isinstance(block, types.TextContent):
+            parts.append(block.text)
+        else:
+            parts.append(str(block))
+
+    return "\n".join(parts) or "(no output)"
+```
+
 ---
 
 ## 4. 工具注册流程
