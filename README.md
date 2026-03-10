@@ -13,6 +13,34 @@
 
 ## News
 
+### 2025-03 新增：Task Queue 任务队列系统
+
+新增任务队列工具，支持自管理 AI 任务执行：
+
+```bash
+# 添加任务（外部 Claude Code 执行）
+taskqueue(action="add", title="开发功能X", instructions="请实现...", case_dir="case1")
+
+# 查看任务列表
+taskqueue(action="list")
+
+# 查看任务详情
+taskqueue(action="get", task_id="task-001")
+
+# 连接到正在运行的任务会话
+taskqueue(action="attach", task_id="task-001")
+```
+
+**核心特性：**
+- 外部执行模式：使用 tmux 创建独立会话，运行 Claude Code CLI
+- 任务状态管理：PENDING → RUNNING → DONE/BLOCKED/FAILED
+- 自动恢复：崩溃任务自动重试（最多3次）
+- 安全检查：root 用户禁止使用 --dangerously-skip-permissions
+
+详细文档：[docs/extra-cases/nanobot-integrate-claudecode.md](./docs/extra-cases/nanobot-integrate-claudecode.md)
+
+---
+
 ### 2025-03 新增：Learn Mode 学习模式
 
 新增 `learn` 命令和内置 `nanobot-learn` skill，提供两种学习模式：
