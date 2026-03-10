@@ -255,6 +255,7 @@ def gateway(
     from nanobot.cron.types import CronJob
     from nanobot.heartbeat.service import HeartbeatService
     from nanobot.session.manager import SessionManager
+    from nanobot.taskqueue.service import TaskQueueService
 
     if verbose:
         import logging
@@ -334,6 +335,27 @@ def gateway(
         return response
     cron.on_job = on_cron_job
 
+    # Create task queue service with result delivery callback
+    async def on_task_result(task_id: str, result: str) -> None:
+        """Deliver task execution result to the user via message bus."""
+        from nanobot.bus.events import OutboundMessage
+
+        # Find the target channel for delivery
+        channel, chat_id = _pick_heartbeat_target()
+
+        # Send result to user
+        await bus.publish_outbound(OutboundMessage(
+            channel=channel,
+            chat_id=chat_id,
+            content=f"[Task {task_id} completed]\n\n{result}",
+        ))
+
+    task_queue = TaskQueueService(
+        workspace=config.workspace_path,
+        agent=agent,
+        on_result=on_task_result,
+    )
+
     # Create channel manager
     channels = ChannelManager(config, bus)
 
@@ -398,11 +420,30 @@ def gateway(
         console.print(f"[green]✓[/green] Cron: {cron_status['jobs']} scheduled jobs")
 
     console.print(f"[green]✓[/green] Heartbeat: every {hb_cfg.interval_s}s")
+    # Task queue processor background task
+    task_queue_processor_task: asyncio.Task | None = None
+
+    async def run_task_queue_processor():
+        """Background task that processes the task queue every 2 minutes."""
+        while True:
+            try:
+                await asyncio.sleep(2 * 60)  # 2 minutes
+                await task_queue.process_queue()
+            except asyncio.CancelledError:
+                break
+            except Exception as e:
+                import traceback
+                console.print(f"[red]Error in task queue processor: {e}[/red]")
+                traceback.print_exc()
+
 
     async def run():
+        nonlocal task_queue_processor_task
         try:
             await cron.start()
             await heartbeat.start()
+            # Start task queue processor
+            task_queue_processor_task = asyncio.create_task(run_task_queue_processor())
             await asyncio.gather(
                 agent.run(),
                 channels.start_all(),
@@ -415,6 +456,13 @@ def gateway(
             cron.stop()
             agent.stop()
             await channels.stop_all()
+            # Cancel task queue processor
+            if task_queue_processor_task:
+                task_queue_processor_task.cancel()
+                try:
+                    await task_queue_processor_task
+                except asyncio.CancelledError:
+                    pass
 
     asyncio.run(run())
 

@@ -130,6 +130,16 @@ class AgentLoop:
         if self.cron_service:
             self.tools.register(CronTool(self.cron_service))
 
+        # Register task queue tool
+        from nanobot.agent.tools.taskqueue import TaskQueueTool
+        from nanobot.taskqueue.service import TaskQueueService
+
+        task_queue_service = TaskQueueService(
+            workspace=self.workspace,
+            agent=self,
+        )
+        self.tools.register(TaskQueueTool(workspace=self.workspace, service=task_queue_service))
+
     async def _connect_mcp(self) -> None:
         """Connect to configured MCP servers (one-time, lazy)."""
         if self._mcp_connected or self._mcp_connecting or not self._mcp_servers:
@@ -273,7 +283,6 @@ class AgentLoop:
             else:
                 task = asyncio.create_task(self._dispatch(msg))
                 self._active_tasks.setdefault(msg.session_key, []).append(task)
-                # Remove task from active tasks when done, to prevent memory leak. Use session_key to find the right list, but check if task is still there in case of multiple concurrent tasks.
                 task.add_done_callback(lambda t, k=msg.session_key: self._active_tasks.get(k, []) and self._active_tasks[k].remove(t) if t in self._active_tasks.get(k, []) else None)
 
     async def _handle_stop(self, msg: InboundMessage) -> None:
@@ -335,33 +344,6 @@ class AgentLoop:
         on_progress: Callable[[str], Awaitable[None]] | None = None,
     ) -> OutboundMessage | None:
         """Process a single inbound message and return the response."""
-        """
-        1. System消息处理
-        └─► 解析channel:chat_id
-        └─► 特殊处理
-
-        2. Slash命令
-        ├─► /new  - 立即整合记忆，开启新会话
-        └─► /help - 显示帮助
-
-        3. 记忆整合触发
-        └─► 如果 unconsolidated >= memory_window
-        └─► 异步触发 _consolidate_memory()
-
-        4. 构建消息
-        ├─► session.get_history(max_messages=memory_window)
-        └─► context.build_messages(history, current_message, ...)
-
-        5. 运行Agent循环
-        └─► _run_agent_loop(initial_messages, on_progress)
-
-        6. 保存会话
-        ├─► _save_turn(session, all_msgs, ...)
-        └─► sessions.save(session)
-
-        7. 返回响应
-        └─► OutboundMessage
-        """
         # System messages: parse origin from chat_id ("channel:chat_id")
         if msg.channel == "system":
             channel, chat_id = (msg.chat_id.split(":", 1) if ":" in msg.chat_id
@@ -394,12 +376,10 @@ class AgentLoop:
             self._consolidating.add(session.key)
             try:
                 async with lock:
-                    # 获取未压缩的消息
                     snapshot = session.messages[session.last_consolidated:]
                     if snapshot:
                         temp = Session(key=session.key)
                         temp.messages = list(snapshot)
-                        # 触发压缩，利用LLM为当前会话信息生成简短摘要，持久化保存至History.md文档，并更新last_consolidated索引
                         if not await self._consolidate_memory(temp, archive_all=True):
                             return OutboundMessage(
                                 channel=msg.channel, chat_id=msg.chat_id,
