@@ -1,6 +1,7 @@
 """Task queue service for self-managing AI system."""
 
 import asyncio
+import subprocess
 from datetime import datetime
 from pathlib import Path
 from typing import TYPE_CHECKING, Awaitable, Callable
@@ -40,18 +41,47 @@ class TaskQueueService:
         agent: "AgentLoop",
         todo_filename: str = "todo.md",
         on_result: TaskResultCallback | None = None,
+        use_external: bool = True,  # 默认使用外部 Claude 实例
     ):
         self.workspace = workspace
         self.agent = agent
         self.todo_file = workspace / todo_filename
         self.storage = TaskQueueStorage(self.todo_file)
         self._on_result = on_result
+        # 检查 tmux 是否可用
+        self._tmux_available = self._check_tmux_available()
+        # 如果用户要求外部执行但 tmux 不可用，自动降级
+        self.use_external = use_external and self._tmux_available
+        if use_external and not self._tmux_available:
+            logger.warning(
+                "tmux not available, falling back to internal agent execution. "
+                "To use external Claude instances, please install tmux."
+            )
+        # 外部执行模式配置
+        self.cases_dir = workspace / "cases"
+
+    def _check_tmux_available(self) -> bool:
+        """检查 tmux 是否可用."""
+        try:
+            result = subprocess.run(
+                ["tmux", "-V"],
+                capture_output=True,
+                text=True,
+                timeout=5,
+            )
+            return result.returncode == 0
+        except (FileNotFoundError, subprocess.TimeoutExpired):
+            return False
 
     async def process_queue(self) -> None:
         """Process pending tasks in the queue."""
         try:
             # Parse current tasks
             tasks_by_state = self.storage.read_tasks()
+
+            # Check status of external running tasks
+            if self.use_external:
+                await self._check_external_tasks(tasks_by_state)
 
             # Recover from any crashed RUNNING tasks
             await self._recover_running_tasks(tasks_by_state)
@@ -63,10 +93,141 @@ class TaskQueueService:
                 return
 
             # Execute the task
-            await self._execute_task(task)
+            if self.use_external:
+                await self._execute_task_in_tmux(task)
+            else:
+                await self._execute_task(task)
 
         except Exception as e:
             logger.error(f"Error processing task queue: {e}")
+
+    async def _check_external_tasks(self, tasks_by_state: dict[TaskState, list[Task]]) -> None:
+        """检查外部运行的任务状态，处理已完成的任务."""
+        running_tasks = tasks_by_state.get(TaskState.RUNNING, [])
+        if not running_tasks:
+            return
+
+        for task in running_tasks:
+            await self._handle_external_result(task)
+
+    async def _handle_external_result(self, task: Task) -> None:
+        """检查外部任务是否完成，并处理结果."""
+        if not task.tmux_session or not task.result_file:
+            return
+
+        result_path = Path(task.result_file)
+
+        # 检查结果文件是否存在
+        if not result_path.exists():
+            # 检查 tmux session 是否还存在
+            try:
+                result = subprocess.run(
+                    ["tmux", "has-session", "-t", task.tmux_session],
+                    capture_output=True,
+                    text=True,
+                )
+                if result.returncode != 0:
+                    # session 不存在，可能是崩溃了
+                    logger.warning(f"tmux session {task.tmux_session} not found, marking as failed")
+                    await self._mark_failed(task, "External process terminated unexpectedly")
+            except Exception as e:
+                logger.error(f"Error checking tmux session: {e}")
+            return
+
+        # 读取结果
+        try:
+            content = result_path.read_text(encoding="utf-8")
+            # 解析结果：检查是否包含错误标记
+            if content.startswith("[ERROR]"):
+                error_msg = content[7:].strip()
+                await self._mark_failed(task, error_msg)
+            else:
+                await self._mark_done(task, content)
+        except Exception as e:
+            logger.error(f"Error reading result file: {e}")
+            await self._mark_failed(task, f"Error reading result: {e}")
+
+    async def _execute_task_in_tmux(self, task: Task) -> None:
+        """在 tmux session 中启动外部 Claude 实例执行任务."""
+        logger.info(f"Executing task {task.id} in external tmux session: {task.title}")
+
+        # 1. 创建工作目录
+        # 如果指定了 case_dir，使用 cases/{case_dir}，否则使用 cases/{task_id}
+        if task.case_dir:
+            task_workspace = self.cases_dir / task.case_dir
+        else:
+            task_workspace = self.cases_dir / task.id
+        task_workspace.mkdir(parents=True, exist_ok=True)
+
+        # 2. 写入任务指令到 PRD.md
+        prd_file = task_workspace / "PRD.md"
+        prd_file.write_text(task.instructions, encoding="utf-8")
+
+        # 3. 创建结果文件路径
+        result_file = str(task_workspace / ".result.md")
+
+        # 4. 更新任务状态为 RUNNING
+        tasks_by_state = self.storage.read_tasks()
+
+        for t in tasks_by_state[TaskState.PENDING]:
+            if t.id == task.id:
+                t.state = TaskState.RUNNING
+                t.started_at = datetime.now()
+                t.tmux_session = f"{self.TMUX_SESSION_PREFIX}{t.id}"
+                t.workspace = str(task_workspace)
+                t.result_file = result_file
+                task = t
+                break
+
+        self.storage.write_tasks(tasks_by_state)
+
+        # 5. 启动 tmux session
+        tmux_session = task.tmux_session
+
+        try:
+            # 检查 session 是否已存在
+            check_result = subprocess.run(
+                ["tmux", "has-session", "-t", tmux_session],
+                capture_output=True,
+                text=True,
+            )
+            if check_result.returncode == 0:
+                # session 已存在，先杀掉
+                logger.info(f"tmux session {tmux_session} already exists, killing it first")
+                subprocess.run(["tmux", "kill-session", "-t", tmux_session], capture_output=True)
+                await asyncio.sleep(0.5)
+
+            # 构建 claude 命令
+            claude_params = task.claude_params or "--dangerously-skip-permissions"
+            cmd = f"cd {task_workspace} && claude {claude_params}"
+
+            # 创建新的 tmux session 并启动 claude
+            subprocess.run(
+                ["tmux", "new-session", "-d", "-s", tmux_session],
+                capture_output=True,
+                check=True,
+            )
+            # 发送命令到 tmux session
+            subprocess.run(
+                ["tmux", "send-keys", "-t", tmux_session, cmd, "C-m"],
+                capture_output=True,
+                check=True,
+            )
+
+            logger.info(f"Started tmux session {tmux_session} for task {task.id}")
+
+        except subprocess.CalledProcessError as e:
+            logger.error(f"Failed to start tmux session: {e}")
+            await self._mark_failed(task, f"Failed to start tmux session: {e}")
+        except FileNotFoundError:
+            # tmux 命令未找到，回退到内部执行
+            logger.error("tmux not found, falling back to internal agent execution")
+            self.use_external = False
+            # 在内部执行任务
+            await self._execute_task(task)
+        except Exception as e:
+            logger.error(f"Error executing task in tmux: {e}")
+            await self._mark_failed(task, str(e))
 
     async def _recover_running_tasks(self, tasks_by_state: dict[TaskState, list[Task]]) -> None:
         """Recover from crashed tasks that were RUNNING."""
@@ -194,8 +355,18 @@ class TaskQueueService:
         title: str,
         instructions: str,
         priority: str = "normal",
+        case_dir: str = "",
+        claude_params: str = "",
     ) -> Task:
-        """Add a new task to the queue."""
+        """Add a new task to the queue.
+
+        Args:
+            title: 任务标题
+            instructions: 任务指令（会写入 PRD.md）
+            priority: 优先级
+            case_dir: case 目录名（如 "case1"），会创建为 cases/{case_dir}
+            claude_params: 额外 claude 参数（如 "--dangerously-skip-permissions"）
+        """
         tasks_by_state = self.storage.read_tasks()
 
         # Generate task ID
@@ -219,6 +390,8 @@ class TaskQueueService:
             instructions=instructions,
             priority=priority,
             created_at=datetime.now(),
+            case_dir=case_dir or None,
+            claude_params=claude_params or "--dangerously-skip-permissions",
         )
 
         # Add to PENDING

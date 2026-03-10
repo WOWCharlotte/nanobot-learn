@@ -28,6 +28,7 @@ class TaskQueueTool(Tool):
             self._service = TaskQueueService(
                 workspace=self._workspace,
                 agent=None,  # Will be set later if needed
+                use_external=True,  # 默认使用外部 Claude 实例
             )
         return self._service
 
@@ -37,7 +38,7 @@ class TaskQueueTool(Tool):
 
     @property
     def description(self) -> str:
-        return "Manage task queue for self-managing AI. Actions: add, list, get, update."
+        return "Manage task queue for self-managing AI. Actions: add, list, get, update, attach."
 
     @property
     def parameters(self) -> dict[str, Any]:
@@ -46,7 +47,7 @@ class TaskQueueTool(Tool):
             "properties": {
                 "action": {
                     "type": "string",
-                    "enum": ["add", "list", "get", "update"],
+                    "enum": ["add", "list", "get", "update", "attach"],
                     "description": "Action to perform",
                 },
                 "title": {
@@ -63,6 +64,15 @@ class TaskQueueTool(Tool):
                     "description": "Task priority (for add)",
                     "default": "normal",
                 },
+                "case_dir": {
+                    "type": "string",
+                    "description": "Case directory name (for add), e.g. 'case1'. Creates cases/{case_dir}",
+                },
+                "claude_params": {
+                    "type": "string",
+                    "description": "Extra Claude parameters (for add), e.g. '--dangerously-skip-permissions'",
+                    "default": "--dangerously-skip-permissions",
+                },
                 "state": {
                     "type": "string",
                     "enum": ["PENDING", "RUNNING", "DONE", "BLOCKED", "FAILED"],
@@ -70,7 +80,7 @@ class TaskQueueTool(Tool):
                 },
                 "task_id": {
                     "type": "string",
-                    "description": "Task ID (for get, update)",
+                    "description": "Task ID (for get, update, attach)",
                 },
                 "error": {
                     "type": "string",
@@ -86,6 +96,8 @@ class TaskQueueTool(Tool):
         title: str = "",
         instructions: str = "",
         priority: str = "normal",
+        case_dir: str = "",
+        claude_params: str = "--dangerously-skip-permissions",
         state: str | None = None,
         task_id: str = "",
         error: str = "",
@@ -101,6 +113,8 @@ class TaskQueueTool(Tool):
                 title=title,
                 instructions=instructions,
                 priority=priority,
+                case_dir=case_dir,
+                claude_params=claude_params,
             )
             return f"Added task {task.id}: {task.title}\nState: {task.state.value}"
 
@@ -133,6 +147,12 @@ class TaskQueueTool(Tool):
                 f"State: {task.state.value}",
                 f"Created: {task.created_at.isoformat()}Z",
             ]
+            if task.case_dir:
+                lines.append(f"Case dir: {task.case_dir}")
+            if task.workspace:
+                lines.append(f"Workspace: {task.workspace}")
+            if task.tmux_session:
+                lines.append(f"Tmux session: {task.tmux_session}")
             if task.started_at:
                 lines.append(f"Started: {task.started_at.isoformat()}Z")
             if task.completed_at:
@@ -162,5 +182,25 @@ class TaskQueueTool(Tool):
             if success:
                 return f"Updated task {task_id}"
             return f"Task {task_id} not found"
+
+        elif action == "attach":
+            if not task_id:
+                return "Error: task_id is required for attach action"
+            task = service.get_task(task_id)
+            if not task:
+                return f"Task {task_id} not found"
+
+            if not task.tmux_session:
+                return f"Task {task_id} has no tmux session (not running externally)"
+
+            # 返回 tmux attach 命令
+            return (
+                f"Task {task_id} is running in tmux session: {task.tmux_session}\n"
+                f"To attach and view progress, run:\n"
+                f"  tmux attach -t {task.tmux_session}\n"
+                f"\n"
+                f"Or use shorthand:\n"
+                f"  tmux a -t {task.tmux_session}"
+            )
 
         return f"Unknown action: {action}"

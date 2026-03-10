@@ -3,6 +3,11 @@
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from enum import Enum
+from pathlib import Path
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    pass
 
 
 def _format_datetime(dt: datetime) -> str:
@@ -44,6 +49,11 @@ class Task:
     retry_count: int = 0
     priority: str = "normal"
     instructions: str = ""
+    # 外部执行相关字段
+    workspace: str | None = None  # 任务工作目录路径
+    claude_params: str = ""  # 额外 claude 参数（如 --dangerously-skip-permissions）
+    result_file: str | None = None  # 结果文件路径（用于跨进程通信）
+    case_dir: str | None = None  # case 目录名（如 case1）
 
     def to_markdown(self) -> str:
         """Convert task to markdown format."""
