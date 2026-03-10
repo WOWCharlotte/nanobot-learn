@@ -10,6 +10,7 @@
 ![nanobot_arch](../../nanobot_arch.png)
 
 **nanobot** 是 HKUDS 开源的**超轻量级个人 AI 助手**，核心代码仅 **~4,000 行**，比 Clawdbot 小 99%。
+极致的轻量化，接口定义清晰，你可以在此基础上自定义各种功能。
 
 ```
 📊 代码量对比
@@ -54,6 +55,90 @@
 | OAuth | OpenAI Codex, Github Copilot |
 
 ---
+
+## 2. 快速启动
+## 2.1 克隆Github仓库
+**官方仓库**
+```
+git clone https://github.com/HKUDS/nanobot.git
+cd nanobot
+pip install -e .
+```
+**nanobot learn**
+```
+https://github.com/WOWCharlotte/nanobot-learn.git
+cd nanobot-learn
+pip install -e .
+```
+## 2.2 初始化
+执行`nanobot onboard`命令，会生成`~/.nanobot/config.json`文件
+
+## 2.3 配置模型供应商
+我这里选择的是`glm-5`模型，nanobot支持多种模型配置，你可以自由选择
+1. 登录智谱开放平台，注册账号，点击APIKEY
+![zhipu.com](./智谱开放平台-首页.png)
+2. 获取APIKEY
+![zhipu.apikey](./智谱开放平台-获取APIKEY.png)
+3. 配置`~/.nanobot/config.json`文件
+```
+"providers": {
+    "zhipu": {
+      "apiKey": "",
+      "apiBase": "https://open.bigmodel.cn/api/paas/v4",
+      "extraHeaders": null
+    },
+}
+```
+```
+"agents": {
+    "defaults": {
+      "workspace": "~/.nanobot/workspace",
+      "model": "glm-5",
+      "provider": "zhipu",
+      "maxTokens": 8192,
+      "temperature": 0.1,
+      "maxToolIterations": 40,
+      "memoryWindow": 100,
+      "reasoningEffort": null
+    }
+}
+```
+## 2.3 启动 nanobot
+配置好模型供应商后，执行`nanobot agent`命令，进入交互模式，输入"hi"，如果模型正常回复，说明配置成功
+## 2.4 配置Channel
+> 如果想在手机APP上跟nanobot对话，我们需要配置一下Channel，我这里选择的是QQ。
+1. 注册账号
+    - 访问[QQ开放平台](https://q.qq.com/#/)
+    - 点击立即注册
+    ![qq.com](./QQ开放平台-登录页.png)
+    - 按照步骤注册，主体选择**个人**，注意手机号必须是用你的身份证注册的，否则会提示输入姓名与身份证上的姓名不符合🤡
+2. 登录并创建机器人
+    - 登录[QQ开放平台](https://q.qq.com/#/)，点击机器人，点击创建机器人
+    ![qq.com](./QQ开放平台-首页.png)
+    - 填写机器人信息
+    ![bot](./QQ开放平台-创建机器人.png)
+    - 点击创建好的机器人进入**开发管理**，复制**AppID**，生成**AppSecret**
+    ![bot](./QQ开放平台-机器人-开发管理.png)
+    - 点击沙箱配置，点击添加成员，完成后扫码
+    ![bot](./QQ开放平台-机器人-沙箱配置.png)
+    - 创建完成后，你应该就可以在自己的QQ列表里找到机器人了，但此时的机器人还不能工作，我们还需要配置Channel
+3. 配置`~/.nanobot/config.json`文件
+    需要将`enabled`设置为`true`,填入刚刚复制来的AppID和AppSecret，将`allowFrom`设置为`["*"]`，这表示所有来源都可以访问
+    ```
+    "qq": {
+        "enabled": true,
+        "appId": "",
+        "secret": "",
+        "allowFrom": [
+            "*"
+        ]
+        },
+    ```
+4. 执行 `nanobot gateway` 启动nanobot连接QQ机器人
+![nanobot](./Nanobot-Gateway.png)
+恭喜你已经完成了Nanobot的基本配置，接下来是Nanobot的深入讲解，你准备好了么？
+
+
 
 ## 2. 项目结构
 
