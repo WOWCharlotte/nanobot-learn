@@ -166,18 +166,28 @@ class TaskQueueService:
         # 3. 创建结果文件路径
         result_file = str(task_workspace / ".result.md")
 
-        # 4. 更新任务状态为 RUNNING
+        # 4. 更新任务状态为 RUNNING (需要从 PENDING 移动到 RUNNING 列表)
         tasks_by_state = self.storage.read_tasks()
 
-        for t in tasks_by_state[TaskState.PENDING]:
+        # Find and remove from PENDING list
+        moved_task = None
+        for i, t in enumerate(tasks_by_state[TaskState.PENDING]):
             if t.id == task.id:
+                # Update task state
                 t.state = TaskState.RUNNING
                 t.started_at = datetime.now()
                 t.tmux_session = f"{self.TMUX_SESSION_PREFIX}{t.id}"
                 t.workspace = str(task_workspace)
                 t.result_file = result_file
-                task = t
+                moved_task = t
+                # Remove from PENDING list
+                tasks_by_state[TaskState.PENDING].pop(i)
                 break
+
+        # Add to RUNNING list if found
+        if moved_task:
+            tasks_by_state[TaskState.RUNNING].append(moved_task)
+            task = moved_task
 
         self.storage.write_tasks(tasks_by_state)
 
@@ -198,7 +208,7 @@ class TaskQueueService:
                 await asyncio.sleep(0.5)
 
             # 构建 claude 命令
-            claude_params = task.claude_params or "--dangerously-skip-permissions"
+            claude_params = task.claude_params
             cmd = f"cd {task_workspace} && claude {claude_params}"
 
             # 创建新的 tmux session 并启动 claude
@@ -235,14 +245,40 @@ class TaskQueueService:
         if not running_tasks:
             return
 
-        logger.info(f"Recovering {len(running_tasks)} crashed RUNNING tasks")
-
+        # Only recover truly crashed tasks (has tmux_session but session doesn't exist)
+        tasks_to_recover = []
         for task in running_tasks:
-            # Reset to PENDING for retry
+            if not task.tmux_session:
+                # No tmux_session means internal execution task, can recover
+                tasks_to_recover.append(task)
+                continue
+
+            # Check if tmux session still exists
+            try:
+                result = subprocess.run(
+                    ["tmux", "has-session", "-t", task.tmux_session],
+                    capture_output=True,
+                    text=True,
+                    timeout=5,
+                )
+                if result.returncode != 0:
+                    # Session doesn't exist, task crashed
+                    logger.info(f"Found crashed task {task.id}, session {task.tmux_session} not found")
+                    tasks_to_recover.append(task)
+                # else: session exists, task is running normally, skip
+            except Exception:
+                # On error, don't recover by default
+                pass
+
+        if not tasks_to_recover:
+            return
+
+        logger.info(f"Recovering {len(tasks_to_recover)} crashed RUNNING tasks")
+
+        for task in tasks_to_recover:
             task.state = TaskState.PENDING
             task.started_at = None
             task.tmux_session = None
-            # Increment retry count
             task.retry_count += 1
 
         self.storage.write_tasks(tasks_by_state)
@@ -271,17 +307,25 @@ class TaskQueueService:
         """Execute a task through the agent."""
         logger.info(f"Executing task {task.id}: {task.title}")
 
-        # Update task state to RUNNING
+        # Update task state to RUNNING (need to move from PENDING to RUNNING list)
         tasks_by_state = self.storage.read_tasks()
 
-        # Find and update task
-        for t in tasks_by_state[TaskState.PENDING]:
+        # Find and remove from PENDING list
+        moved_task = None
+        for i, t in enumerate(tasks_by_state[TaskState.PENDING]):
             if t.id == task.id:
                 t.state = TaskState.RUNNING
                 t.started_at = datetime.now()
                 t.tmux_session = f"{self.TMUX_SESSION_PREFIX}{t.id}"
-                task = t
+                moved_task = t
+                # Remove from PENDING list
+                tasks_by_state[TaskState.PENDING].pop(i)
                 break
+
+        # Add to RUNNING list if found
+        if moved_task:
+            tasks_by_state[TaskState.RUNNING].append(moved_task)
+            task = moved_task
 
         self.storage.write_tasks(tasks_by_state)
 
@@ -365,7 +409,7 @@ class TaskQueueService:
             instructions: 任务指令（会写入 PRD.md）
             priority: 优先级
             case_dir: case 目录名（如 "case1"），会创建为 cases/{case_dir}
-            claude_params: 额外 claude 参数（如 "--dangerously-skip-permissions"）
+            claude_params: 额外 claude 参数
         """
         tasks_by_state = self.storage.read_tasks()
 
@@ -391,7 +435,7 @@ class TaskQueueService:
             priority=priority,
             created_at=datetime.now(),
             case_dir=case_dir or None,
-            claude_params=claude_params or "--dangerously-skip-permissions",
+            claude_params=claude_params,
         )
 
         # Add to PENDING

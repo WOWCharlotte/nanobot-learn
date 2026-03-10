@@ -1,5 +1,6 @@
 """Task queue tool for managing self-managing AI tasks."""
 
+import os
 from pathlib import Path
 from typing import Any
 
@@ -109,6 +110,22 @@ class TaskQueueTool(Tool):
         if action == "add":
             if not title:
                 return "Error: title is required for add action"
+
+            # Check for dangerous parameter in root environment
+            if "--dangerously-skip-permissions" in claude_params:
+                # Check if running as root
+                if os.geteuid() == 0:
+                    return (
+                        "⚠️  安全风险警告：\n"
+                        "检测到您在 root 环境下使用 --dangerously-skip-permissions 参数。\n\n"
+                        "由于安全，Claude Code 禁止在 root/sudo 权限原因下使用此参数。\n\n"
+                        "建议方案：\n"
+                        "1. 清除 --dangerously-skip-permissions 参数\n"
+                        "2. 使用交互形式进入 Claude Code（不带 -y 参数）\n"
+                        "3. 或者创建非 root 用户来运行任务\n\n"
+                        "如需继续，请在 claude_params 中移除 --dangerously-skip-permissions 参数。"
+                    )
+
             task = service.add_task(
                 title=title,
                 instructions=instructions,
