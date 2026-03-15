@@ -41,6 +41,30 @@ taskqueue(action="attach", task_id="task-001")
 
 ---
 
+### 2025-03 新增：上下文工程完全指南
+
+深入理解 Nanobot 的上下文工程架构：
+
+```mermaid
+flowchart TB
+    A[ContextBuilder] --> B[System Prompt]
+    A --> C[Runtime Context]
+    A --> D[Conversation History]
+    A --> E[Long-term Memory]
+    B --> F[Identity + Bootstrap Files]
+    E --> G[MEMORY.md + HISTORY.md]
+```
+
+**核心概念：**
+- 上下文工程 vs 提示词工程：系统层面的上下文生命周期管理
+- 两层记忆系统：MEMORY.md（长期事实）+ HISTORY.md（对话历史）
+- Bootstrap Files：AGENTS.md、SOUL.md、USER.md、TOOLS.md、IDENTITY.md
+- 运行时上下文：时间、渠道、聊天ID（标记为 metadata only）
+
+详细文档：[docs/extra-cases/nanobot-context-engineering.md](./docs/extra-cases/nanobot-context-engineering.md)
+
+---
+
 ### 2025-03 新增：Learn Mode 学习模式
 
 新增 `learn` 命令和内置 `nanobot-learn` skill，提供两种学习模式：
